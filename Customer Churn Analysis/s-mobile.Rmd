@@ -1,0 +1,590 @@
+---
+title: "S-Mobile: Predicting Customer Churn"
+output: html_document
+---
+
+* Team-lead gitlab id: rsm-s8hua
+* Group number: We don't know
+* Group name: UCSD Undergrad Alumni
+* Team member names: Shiyi Hua, Wan Qiu, Siwei Xie, Ziyuan Yan
+
+```{r r_setup, include = FALSE}
+## initial settings
+knitr::opts_chunk$set(
+  comment = NA,
+  echo = TRUE,
+  error = TRUE,
+  cache = FALSE,
+  message = FALSE,
+  dpi = 96,
+  warning = FALSE
+)
+
+## width to use when printing tables etc.
+options(
+  width = 250,
+  scipen = 100,
+  max.print = 5000,
+  stringsAsFactors = FALSE
+)
+
+## load radiant packages if neededi
+if (!exists("r_environment")) library(radiant)
+```
+
+<style>
+.btn, .form-control, pre, code, pre code {
+  border-radius: 4px;
+}
+.table {
+  width: auto;
+}
+ul, ol {
+  padding-left: 18px;
+}
+code, pre, pre code {
+  overflow: auto;
+  white-space: pre;
+  word-wrap: normal;
+}
+code {
+  color: #c7254e;
+  background-color: #f9f2f4;
+}
+pre {
+  background-color: #ffffff;
+}
+</style>
+
+## Setup
+
+Please complete this Rmarkdown document by answering the questions in `s-mobile.pdf` on Canvas (week9/). The code block below will load the data you will need. Please DO NOT change the code used to load the data. Create an HTML file with all your results and comments and push both the Rmarkdown and HTML file to GitLab when you are done. All analysis results MUST be reproducible (i.e., the TA and I must be able to recreate the HTML from the Rmarkdown file without changes or errors). Upload all files to GitLab.
+
+This is the fourth group assignment for MGTA 455 and you will be using git and GitLab. If two people edit the same file at the same time you could get what is called a "merge conflict". git will not decide for you who's change to accept so the team-lead will have to determine which edits to use. To avoid merge conflicts, always "pull" changes to the repo before you start working on any files. Then, when you are done, save and commit your changes, and then push them to GitLab. Make "pull first" a habit!
+
+```{r}
+## Loading the data from Dropbox
+s_mobile <- readr::read_rds("data/s_mobile.rds")
+```
+
+
+## Question answers
+
+
+### Pre-processing & EDA
+```{r}
+## Library tidyverse package
+library(tidyverse)
+```
+
+
+```{r}
+## To make the resulting prediction have the correct magnitude for the representative sample
+s_mobile <- s_mobile %>%
+  mutate(cweight = ifelse(churn == "yes", 1L, 49L))
+```
+
+
+```{r}
+## Split dataset into training set, test set, and representative set
+train <- s_mobile %>%
+  filter(training == 1)
+
+test <- s_mobile %>%
+  filter(training == 0)
+
+representative <- s_mobile %>%
+  filter(representative == 1)
+```
+
+
+```{r}
+## Show descriptive statistics in the training data
+result_explore <- explore(
+  s_mobile, 
+  vars = c(
+    "churn", "changer", "changem", "revenue", "mou", "overage", 
+    "roam", "conference", "months", "uniqsubs", "custcare", 
+    "retcalls", "dropvce", "eqpdays", "refurb", "smartphone", 
+    "highcreditr", "mcycle", "car", "travel", "region", "occupation"
+  ), 
+  fun = c("mean", "min", "max", "sd"), 
+  data_filter = "training == 1",
+  nr = Inf
+)
+#summary(result)
+dtab(result_explore) %>% render()
+```
+
+
+```{r}
+## Save the above descriptive statistics
+stats <- result_explore$tab
+register("stats")
+```
+
+
+```{r}
+## Show churn in the representative sample
+result_churn_repre <- explore(
+  s_mobile, 
+  vars = "churn", 
+  fun = "mean",
+  data_filter = "representative == 1", 
+  nr = Inf
+)
+# summary(result)
+dtab(result_churn_repre, dec = 4) %>% render()
+```
+
+
+### Question 1
+#### Model 1 - Logistic Regression with 21 Variables and Weights (Unstandardized)
+```{r}
+## Logistic regression without interaction(s)
+result_logit1 <- logistic(
+  s_mobile, 
+  rvar = "churn", 
+  evar = c(
+    "changer", "changem", "revenue", "mou", "overage", "roam", 
+    "conference", "months", "uniqsubs", "custcare", "retcalls", 
+    "dropvce", "eqpdays", "refurb", "smartphone", "highcreditr", 
+    "mcycle", "car", "travel", "region", "occupation"
+  ), 
+  lev = "yes", 
+  wts = "cweight",
+  data_filter = "training == 1"
+)
+summary(result_logit1)
+```
+
+
+```{r}
+## Look at the performance measure of AUC on the test set
+pred <- predict(result_logit1, pred_data = test)
+test <- store(test, pred, name = "prob_logit1")
+auc_logit1 <- auc(test$prob_logit1, test$churn)
+auc_logit1
+```
+
+
+#### Model 2 - Neural Network with 22 Variables and Weights
+```{r}
+## Baseline neural network with randomly chosen parameters
+result_nn_base <- nn(
+  s_mobile, 
+  rvar = "churn", 
+  evar = c(
+    "changer", "changem", "revenue", "mou", "overage", "roam", 
+    "conference", "months", "uniqsubs", "custcare", "retcalls", 
+    "dropvce", "eqpdays", "refurb", "smartphone", "highcreditr", 
+    "mcycle", "car", "travel", "region", "occupation"
+  ), 
+  lev = "yes", 
+  size = 3, 
+  decay = 0.35, 
+  wts = "cweight", 
+  seed = 1234, 
+  data_filter = "training == 1"
+)
+summary(result_nn_base, prn = TRUE)
+```
+
+
+```{r}
+## Cross-validation for neural network to get the optimal parameters in terms of maximizing AUC
+## cv.nn(result_nn_base, K = 5, size = 1:5, decay = seq(0.1, 0.5, 0.1), seed = 1234)
+## Optimal size = 6, decay = 0.1
+```
+
+
+```{r}
+## Neural network with optimal parameters
+result_nn_cv <- nn(
+  s_mobile, 
+  rvar = "churn", 
+  evar = c(
+    "changer", "changem", "revenue", "mou", "overage", "roam", 
+    "conference", "months", "uniqsubs", "custcare", "retcalls", 
+    "dropvce", "eqpdays", "refurb", "smartphone", "highcreditr", 
+    "mcycle", "car", "travel", "region", "occupation"
+  ), 
+  lev = "yes", 
+  size = 6, 
+  decay = 0.1, 
+  wts = "cweight", 
+  seed = 1234, 
+  data_filter = "training == 1"
+)
+summary(result_nn_cv, prn = TRUE)
+```
+
+
+```{r}
+## Look at the performance measure of AUC on the test set
+pred <- predict(result_nn_cv, pred_data = test)
+test <- store(test, pred, name = "prob_nn")
+auc_nn <- auc(test$prob_nn, test$churn)
+auc_nn
+```
+
+
+#### Comparison of 2 Models Based on AUC on the Test Set
+```{r}
+## Create the tibble
+AUC_tibble <- tibble::tibble(
+  Model = c("Logistic Regression", "Neural Network"),
+  TestAUC = c(0.6944828, 0.7315676)) %>%
+  mutate(Model = factor(Model, levels = Model))
+arrange(AUC_tibble, desc(TestAUC))
+```
+
+
+### Question 2
+#### Main Drivers of Churn Under the Logistic Regression (Standardized)
+```{r}
+## Logistic regression with standardization
+result_logit_st <- logistic(
+  s_mobile, 
+  rvar = "churn", 
+  evar = c(
+    "changer", "changem", "revenue", "mou", "overage", "roam", 
+    "conference", "months", "uniqsubs", "custcare", "retcalls", 
+    "dropvce", "eqpdays", "refurb", "smartphone", "highcreditr", 
+    "mcycle", "car", "travel", "region", "occupation"
+  ), 
+  lev = "yes", 
+  wts = "cweight",
+  check = "standardize",
+  data_filter = "training == 1"
+)
+summary(result_logit_st)
+```
+
+
+```{r}
+## Look at the plot of relative importance of explanatory variables
+plot(result_logit_st, custom = FALSE)
+```
+
+
+```{r}
+## Print the ranking of relative importance of explanatory variables
+rank_logit_st <- write.coeff(result_logit_st, sort = TRUE)
+rank_logit_st
+```
+
+
+```{r}
+## Report the top 10 main drivers of churn and their relative importance under the logistic regression (We can refer OR for positive or negative effects of each explanatory variable on the response variable (churn))
+top10_driver_logit <- rank_logit_st[c('label', 'OR','importance')][2:11, ]
+top10_driver_logit
+```
+
+
+#### Main Drivers of Churn Under the Neural Network
+```{r}
+## Look at the plot of variable importance of explanatory variables
+plot(result_nn_cv, plots = "garson", custom = FALSE)
+```
+
+
+```{r}
+## Look at the plots of partial dependence of explanatory variables
+pd_nn <- plot(result_nn_cv, plots = "pdp", custom = FALSE)
+pd_nn
+```
+
+
+### Question 3 - Look at the report
+
+
+### Question 4
+#### Months
+```{r}
+## Explore the statistics of months in the representative set
+result <- explore(
+  s_mobile, 
+  vars = "months", 
+  fun = c("n_obs", "mean", "min", "max", "sd", "median"), 
+  data_filter = "representative==1", 
+  nr = Inf
+)
+#summary(result)
+dtab(result) %>% render()
+```
+
+
+```{r}
+## Try median value of months for comparison
+pred <- predict(result_nn_cv, pred_data = s_mobile, pred_cmd = "months = 16")
+s_mobile <- store(s_mobile, pred, name = "p_months16")
+result <- explore(
+  s_mobile, 
+  vars = c("churn", "p_months16"), 
+  fun = c("n_obs", "mean"),
+  data_filter = "representative == 1 & months < 16", 
+  nr = Inf
+)
+dtab(result, dec = 4) %>% render()
+```
+#### Comment: These two average churn rates are very close.
+
+
+```{r}
+## Try 15 months to check whether the actual churn rate is lower than the predicted churn rate under the action
+pred <- predict(result_nn_cv, pred_data = s_mobile, pred_cmd = "months = 15")
+s_mobile <- store(s_mobile, pred, name = "p_months15")
+result <- explore(
+  s_mobile, 
+  vars = c("churn", "p_months15"), 
+  fun = c("n_obs", "mean"),
+  data_filter = "representative == 1 & months < 15", 
+  nr = Inf
+)
+dtab(result, dec = 4) %>% render()
+```
+#### Comment: The actual churn rate is lower than the predicted churn rate under the action, so we decide that we need 16+ months to lower our churn rate.
+
+
+```{r}
+## We assume the months variable to be 24 (2 year) as our incentive
+pred <- predict(result_nn_cv, pred_data = s_mobile, pred_cmd = "months = 24")
+s_mobile <- store(s_mobile, pred, name = "p_months24")
+result <- explore(
+  s_mobile, 
+  vars = c("churn", "p_months24"), 
+  fun = c("n_obs", "mean"),
+  data_filter = "representative == 1 & months < 24", 
+  nr = Inf
+)
+dtab(result, dec = 4) %>% render()
+```
+#### Comment: The churn rate decreased from 0.0205 to 0.0170.
+
+
+#### Overage
+```{r}
+## Explore the statistics of overage in the representative set
+result <- explore(
+  s_mobile, 
+  vars = "overage", 
+  fun = c("n_obs", "mean", "min", "max", "sd", "median"), 
+  data_filter = "representative==1", 
+  nr = Inf
+)
+#summary(result)
+dtab(result) %>% render()
+```
+
+
+```{r}
+## We assume the overage variable to be 0 (ideal) as our incentive
+pred <- predict(result_nn_cv, pred_data = s_mobile, pred_cmd = "overage = 0")
+s_mobile <- store(s_mobile, pred, name = "p_overage0")
+result <- explore(
+  s_mobile, 
+  vars = c("churn", "p_overage0"), 
+  fun = c("n_obs", "mean"),
+  data_filter = "representative == 1 & overage > 0", 
+  nr = Inf
+)
+dtab(result, dec = 4) %>% render()
+```
+#### Comment: The churn rate decreased from 0.0243 to 0.0162.
+
+
+#### Eqpdays
+```{r}
+## Explore the statistics of eqpdays in the representative set
+result <- explore(
+  s_mobile, 
+  vars = "eqpdays", 
+  fun = c("n_obs", "mean", "min", "max", "sd", "median"), 
+  data_filter = "representative==1", 
+  nr = Inf
+)
+#summary(result)
+dtab(result) %>% render()
+```
+
+
+```{r}
+## We assume the eqpdays variable to be 279 (median) as our incentive
+pred <- predict(result_nn_cv, pred_data = s_mobile, pred_cmd = "eqpdays = 279")
+s_mobile <- store(s_mobile, pred, name = "p_eqpdays279")
+result <- explore(
+  s_mobile, 
+  vars = c("churn", "p_eqpdays279"), 
+  fun = c("n_obs", "mean"),
+  data_filter = "representative == 1 & eqpdays > 279", 
+  nr = Inf
+)
+dtab(result, dec = 4) %>% render()
+```
+#### Comment: The churn rate decreased from 0.0265 to 0.0188.
+
+
+### Question 6
+#### Assumption 1: Monthly revenue is assumed to be the same as the average revenue in the representative set.
+#### Assumption 2: Assume the cost is 0 (i.e. profitability is based on revenue).
+#### Assumption 3: Assume the monthly discount rate to be 0.8%.
+#### Assumption 4: Optimistic discounting - Customers pay at the beginning of each month.
+```{r}
+## Get monthly revenue, discount rate, and the list of discount number
+mon_rev <- mean(representative$revenue)
+mon_rev_list <- rep(mon_rev, 60)
+disc_rate <- 0.008
+disc_num <- seq(0, 59, 1)
+```
+
+
+```{r}
+## Write the function for calculating the total CLV of 60 months
+clv <- function(rev, churn, disc_nr, disc) {
+  retention <- c(1, cumprod(1 - churn)[1:length(cumprod(1 - churn)) - 1])
+  exp_prof <- rev * retention
+  PV_exp_prof <- exp_prof / (1 + disc)^disc_nr
+  CLV <- cumsum(PV_exp_prof)
+  return(tail(CLV, 1))
+}
+```
+
+
+#### Months
+##### No action
+```{r}
+## Get the total CLV if we take no action for variable months
+churn_rate <- rep(0.0205, 60)
+
+months_no_action <- clv(rev = mon_rev_list, churn = churn_rate, disc_nr = disc_num, disc = disc_rate)
+months_no_action
+```
+
+
+##### Take action (24 months)
+```{r}
+## Get the total CLV if we take action for variable months
+churn_rate24 <- rep(0.017, 60)
+
+months24 <- clv(rev = mon_rev_list, churn = churn_rate24, disc_nr = disc_num, disc = disc_rate)
+months24
+```
+
+##### Profitability implication for variable months
+```{r}
+## Get the difference of CLVs under no action and taking action for variable months
+months_prof <- months24 - months_no_action
+months_prof
+```
+
+
+#### Overage
+##### No action
+```{r}
+## Get the total CLV if we take no action for variable overage
+churn_rate_overage <- rep(0.0243, 60)
+
+overage_no_action <- clv(rev = mon_rev_list, churn = churn_rate_overage, disc_nr = disc_num, disc = disc_rate)
+overage_no_action
+```
+
+
+##### Take action (overage = 0)
+```{r}
+## Get the total CLV if we take action for variable overage
+churn_rate_overage0 <- rep(0.0162, 60)
+
+overage0 <- clv(rev = mon_rev_list, churn = churn_rate_overage0, disc_nr = disc_num, disc = disc_rate)
+overage0
+```
+
+
+##### Profitability implication for variable overage
+```{r}
+## Get the difference of CLVs under no action and taking action for variable overage
+overage_prof <- overage0 - overage_no_action
+overage_prof
+```
+
+
+#### Eqpdays
+##### No action
+```{r}
+## Get the total CLV if we take no action for variable eqpdays
+churn_rate_eqpdays <- rep(0.0265, 60)
+
+eqpdays_no_action <- clv(rev = mon_rev_list, churn = churn_rate_eqpdays, disc_nr = disc_num, disc = disc_rate)
+eqpdays_no_action
+```
+
+
+##### Take action (eqpdays = 279)
+```{r}
+## Get the total CLV if we take action for variable eqpdays
+churn_rate_eqpdays279 <- rep(0.0188, 60)
+
+eqpdays279 <- clv(rev = mon_rev_list, churn = churn_rate_eqpdays279, disc_nr = disc_num, disc = disc_rate)
+eqpdays279
+```
+
+
+##### Profitability implication for variable overage
+```{r}
+## Get the difference of CLVs under no action and taking action for variable eqpdays
+eqpdays_prof <- eqpdays279 - eqpdays_no_action
+eqpdays_prof
+```
+
+
+#### Compare three actions
+```{r}
+## Create the tibble
+action_tibble <- tibble::tibble(
+  Variable = c("Months", "Overage", "Eqpdays"),
+  NoActionCLV = c(1644.712, 1516.996, 1449.959),
+  TakeActionCLV = c(1777.477, 1810.087, 1707.253),
+  ProfitabilityImplication = c(132.7654, 293.0917, 257.2939)) %>%
+  mutate(Variable = factor(Variable, levels = Variable))
+arrange(action_tibble, desc(ProfitabilityImplication))
+```
+
+
+## Report
+### Step 1 - Model Development and Selection
+#### We decided to use Logistic Regression and Neural Network as our potential models, because tree-based models are sensitive to skewed dataset and therefore require the 1-million data set. For the Logistic Regression model, we simply selected all 21 variables as explanatory variables, and the AUC on the test set is 0.694. We tried adding interactions to the logistic model, but the AUC is only 0.695. Therefore, for the Logistic Regression part, we decided to use the baseline model for easy interpretation of main drivers in question 2. For the Neural Network model, we ran a cross-validation with K = 5, size from 1 to 8 and, decay from 0.1 to 0.8 with 0.1 intervals. The optimal parameters are size = 6 and decay = 0.1, and the AUC on the test set is 0.732. Since AUC for Neural Network is a lot higher than that for Logistic Regression, we chose the Neural Network model as our predictive model.
+
+
+### Step 2 - Main Drivers and Relative Importance
+#### Based on the logistic regression model, the top 10 drivers are occupation|retired (negative effect on churn since OR = 0.18 < 1), highcreditr|yes (negative effect on churn since OR = 0.48 < 1), occupation|student (positive effect on churn since OR = 1.90 > 1), eqpdays (positive effect on churn since OR = 1.83 > 1), overage (positive effect on churn since OR = 1.79 > 1), region|SW (negative effect on churn since OR = 0.63 < 1), region|NE (negative effect on churn since OR = 0.64 < 1), region|SE (negative effect on churn since OR = 0.65 < 1), region|NW (negative effect on churn since OR = 0.66 < 1), mou (negative effect on churn since OR = 0.68 < 1).
+#### Based on the neural network model, the top 10 drivers are months (negative effect based on its partial dependence plot), overage (positive effect based on its partial dependence plot), eqpdays (positive effect based on its partial dependence plot), changem (positive effect based on its partial dependence plot), occupation|retired (occupation = retired leads to lower churn based on its partial dependence plot), mou (negative  effect based on its partial dependence plot), revenue (positive effect based on its partial dependence plot), highcreditr|yes (highcredit = yes leads to lower churn based on its partial dependence plot), dropvce (positive effect based on its partial dependence plot), occupation|student (occupation = student leads to higher churn based on its partial dependence plot).
+
+
+### Step 3 - Action Development
+#### Months (# of months the customer has had service): According to the partial dependence plot, the longer the customer has had the service, the less likely that the customer will churn. Action 1: If a long-term customer decides to churn, we can offer more discounts compared to a short-term customer. Action 2: We can develop some promotional strategies to attract customers to sign long-term contracts.
+#### Overage (Mean monthly overage minutes): According to the partial dependence plot, the more overage minutes the customer has, the more likely that the customer will churn. In addition, there is a certain range that the customer’s churn rate increases dramatically. Action 1: Lower the overage cost. Action 2: Offer more bundles/packages with more flexibility for customers to choose from. Action 3: Use the customer’s past data to predict in advance whether the customer would have overage cost. Send notifications to customers who are very likely to have overage cost to change to a better plan.
+#### Eqpdays (Number of days customer has owned current handset): According to the partial dependence plot, the longer the customer has owned the current handset, the more likely the customer will churn. Action 1: Encourage customers to upgrade to newer equipment, offer them upgrade discounts. Action 2:Predict when the equipment needs to be changed, and send notifications to customers / offer cheap replacement.
+#### Changem (% change in minutes of use over the most recent 4 month period): According to the partial dependence plot, a customer with higher % change in minutes of use over the most recent 4 month period is more likely to churn. Action: Similar to solving overage, offer more flexible plans, and make it easier for customers to switch between.
+#### Occupation (Categorical variable with 4 occupation levels): According to the partial dependence plot, the retired customers are the least likely to churn, while the students are the most likely to churn. There is nothing we can do about it at the retention stage (we may target more retired customers at the acquisition stage).
+
+
+### Step 4 - Action Quantification
+#### Months: Assume the months variable to be 24 (2 years) as our incentive. Reason: The median value of months in the representative set is 16 and the mean value is 18. We first tried months = 16, and found that the churn rate of taking action is very similar to the churn rate under no action. We then tried months = 15, and found that the churn rate under no action is lower than that under taking action. We decided to take a value that is larger than 16 so that we can reduce the churn rate. In this case, months = 24 makes more sense in reality. The churn rate decreased from 0.0205 to 0.0170. For test, we attract customers to sign long-term contracts and offer more when long-term customers decide to churn to see if the average length increased.
+#### Overage: Assume the overage variable to be 0 (ideal) as our incentive. Reason: Since we want to recommend different plans to our customers to make sure that most of them don’t have overage cost, we set overage = 0 as our result after taking action. The churn rate decreased from 0.0243 to 0.0162. For test, we lower overage costs and offer more plans so that we can try to cover usage needs for all range of customers. Ideally, the overage should be zero.
+#### Eqpdays: Assume the eqpdays variable to be 279 (median) as our incentive. The churn rate decreased from 0.0265 to 0.0188. We encourage customers to upgrade to newer equipment, and offer them upgrade discounts to shorten the eqpdays to the current median.
+
+
+### Step 5 - Action Target
+#### Months - Action: Increase the number of months to at least 24 months. Targeting rule: Customers who have months < 24. Expected churn benefit: Baseline churn: 0.0205;  projected churn: 0.0170.
+#### Overage (Mean monthly overage minutes) - Action: Eliminate overage minutes. Targeting rule: Customers who have overage > 0. Expected churn benefit: Baseline churn: 0.0243;  projected churn: 0.0162.
+#### Eqpdays - Action: Change equipment for customers who have eqpdays > 279, which is the medium eqpdays in the representative dataset. Targeting rule: Customers who have eqpdays > 279. Expected churn benefit: Baseline churn: 0.0265;  projected churn: 0.0188.
+#### Changem - Action: Offer more flexible plans, and make it easier for customers to switch between. Targeting rule: All customers. Expected churn benefit: N/A since we can’t come up with a realistic action to deal with this driver.
+#### Occupation|retired - Action: Target more retired customers. Targeting rule: Retired people at the acquisition stage. Expected churn benefit: N/A since we can’t deal with this driver at the retention stage.
+
+
+### Step 6 - Economics Evaluation
+#### Assumptions: (1) Monthly revenue is assumed to be the same as the average revenue in the representative set, which is 56.63 SGD. (2) Assume the cost is 0 (i.e. profitability is based on revenue). (3) Assume the monthly discount rate to be 0.8%. (4) Assume optimistic discounting - customers pay at the beginning of each month.
+#### Results: Based on the churn rates in question 4, we got that the implied profitability is the highest for taking action on the overage driver (overage = 293.0917 > eqpdays = 257.2939 > months = 132.7654).
+
+
+
