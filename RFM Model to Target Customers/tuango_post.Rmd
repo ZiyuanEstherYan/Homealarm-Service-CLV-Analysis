@@ -1,0 +1,233 @@
+---
+title: Tuango - RFM Analysis for Mobile App Push Messaging on the post roll-out data
+output: html_document
+---
+
+* Name: Ziyuan Yan
+* GitLab id: @rsm-ziy062
+
+```{r r_setup, include = FALSE}
+## initial settings
+knitr::opts_chunk$set(
+  comment = NA,
+  echo = TRUE,
+  error = TRUE,
+  cache = FALSE,
+  message = FALSE,
+  dpi = 96,
+  warning = FALSE
+)
+
+## width to use when printing tables etc.
+options(
+  width = 250,
+  scipen = 100,
+  max.print = 5000,
+  stringsAsFactors = FALSE
+)
+
+## make all required libraries available by loading radiant package if needed
+if (!exists("r_environment")) library(radiant)
+```
+
+<style>
+.btn, .form-control, pre, code, pre code {
+  border-radius: 4px;
+}
+.table {
+  width: auto;
+}
+ul, ol {
+  padding-left: 18px;
+}
+code, pre, pre code {
+  overflow: auto;
+  white-space: pre;
+  word-wrap: normal;
+}
+code {
+  color: #c7254e;
+  background-color: #f9f2f4;
+}
+pre {
+  background-color: #ffffff;
+}
+</style>
+
+## Setup
+
+Please complete this Rmarkdown document by answering question 14 in `tuango.pdf` on Canvas (week4/). The code block below loads the data you need for this second Rmarkdown file. Create an HTML file with all your results and answers and push both the Rmarkdown and HTML file to GitLab when you are done. All results MUST be reproducible (i.e., the TA and I must be able to recreate the Notebook/HTML from the Rmarkdown file without changes or errors).
+
+```{r}
+library(tidyverse)
+library(radiant)
+```
+
+```{r}
+## loading the data - this dataset must NOT be changed
+tuango_post <- readr::read_rds("data/tuango_post.rds")
+```
+
+### Question 14
+```{r}
+training <- filter(tuango_post, training == 1)
+
+avgSpent <- mean(filter(training, ordersize!=0)$ordersize)
+
+cost_offer <- 2.5
+margin_sales <- avgSpent * 0.5
+break_even <- cost_offer/margin_sales # Use training == 1 to calculate break_even rate
+```
+
+```{r}
+# independent quntile
+tuango_post <- tuango_post %>%
+  mutate(rec_iq = xtile(recency, n = 5), 
+         freq_iq = xtile(frequency, n = 5, rev = TRUE),
+         mon_iq = xtile(monetary, n = 5, rev = TRUE))
+```
+
+```{r}
+tuango_post <- mutate(tuango_post, rfm_iq = paste0(rec_iq, freq_iq, mon_iq))
+identical(tuango_post$rfm_iq_pre, tuango_post$rfm_iq)
+```
+
+```{r}
+# sequential quntile
+tuango_post <- tuango_post %>%
+  group_by(rec_iq) %>%
+  mutate(freq_sq = xtile(frequency, n = 5, rev = TRUE)) %>%
+  ungroup()
+
+tuango_post <- tuango_post %>%
+  group_by(rec_iq, freq_sq) %>%
+  mutate(mon_sq = xtile(monetary, n = 5, rev = TRUE)) %>%
+  ungroup()
+
+tuango_post <- tuango_post %>%
+  mutate(rfm_sq = paste0(rec_iq, freq_sq, mon_sq))
+```
+
+```{r}
+remaining <- tuango_post %>%
+  filter(training == 0)
+
+# Function
+perf_calc <- function(index, match, intro) {
+  count <- 0
+  sales <- 0
+  for (i in 1:250902) {
+    if (remaining[[index]][i] %in% match) {
+      count <- count + 1
+      sales <- sales + (remaining$ordersize[i] * 0.5)
+    }
+  }
+  costs <- count * cost_offer
+  profit <- sales - costs
+  ROME <- profit / costs
+  return(c(profit, ROME, paste0(intro, ", the cost is ", round(costs, 2), "RMB, the profit is ", round(profit, 2), "RMB, and the ROME is ", ROME, ".")))
+}
+```
+
+#### Method 1: Independent RFM
+```{r}
+indep <- tuango_post %>%
+  filter(training == 1) %>%
+  group_by(rfm_iq) %>%
+  mutate(smsto_iq = mean(buyer == "yes") > break_even) %>%
+  filter(smsto_iq == TRUE) %>%
+  ungroup()
+
+RFM_Ind <- perf_calc(index = "rfm_iq", match = indep$rfm_iq, intro = "Based on independent RFM")
+RFM_Ind
+```
+
+#### Method 2: Sequential RFM
+```{r}
+seq <- tuango_post %>%
+  filter(training == 1) %>%
+  group_by(rfm_sq) %>%
+  mutate(smsto_sq = mean(buyer == "yes") > break_even) %>%
+  filter(smsto_sq == TRUE) %>%
+  ungroup()
+
+RFM_Seq <- perf_calc(index = "rfm_sq", match = seq$rfm_sq, intro = "Based on sequential RFM")
+RFM_Seq
+```
+
+#### Method 3: Sequential RFM based on a breakeven response rate calculated for each RFM cell.
+```{r}
+# calculate break-even rate for every cell in the training set
+indiv_be <- tuango_post %>%
+  filter(training == 1) %>%
+  filter(buyer == "yes") %>%
+  group_by(rfm_sq) %>%
+  summarise(avg_ordersize = mean(ordersize)) %>%
+  mutate(breakeven_indiv = cost_offer / (avg_ordersize * 0.5))
+
+be2 <- tuango_post %>%
+  filter(training == 1) %>%
+  left_join(indiv_be, by = "rfm_sq") %>%
+  group_by(rfm_sq) %>%
+  mutate(smsto_sq_indiv_be = mean(buyer == "yes") > breakeven_indiv) %>%
+  filter(smsto_sq_indiv_be == TRUE) %>%
+  ungroup()
+
+RFM_Seq_indiv_be <- perf_calc(index = "rfm_sq", match = be2$rfm_sq, intro = "Based on sequential RFM with a breakeven response rate for each RFM index")
+RFM_Seq_indiv_be
+```
+
+#### Method 4: Calculate the performance based on the independent RFM with adjusting for the standard error of the response rate
+```{r}
+Ind_lb <- tuango_post %>%
+  filter(training == 1) %>%
+  group_by(rfm_iq) %>%
+  mutate(smsto_lbiq = (mean(buyer == "yes") - 1.64 * seprop(buyer == "yes")) > break_even) %>%
+  filter(smsto_lbiq == TRUE) %>%
+  ungroup()
+
+RFM_Ind_lb <- perf_calc(index = "rfm_iq", match = Ind_lb$rfm_iq, intro = "Based on independent RFM with adjusting for the standard error of the response rate")
+RFM_Ind_lb
+```
+
+#### Method 5: Calculate the performance based on the sequential RFM with adjusting for the standard error of the response rate
+```{r}
+Seq_lb <- tuango_post %>%
+  filter(training == 1) %>%
+  group_by(rfm_sq) %>%
+  mutate(smsto_lbsq = (mean(buyer == "yes") - 1.64 * seprop(buyer == "yes")) > break_even) %>%
+  filter(smsto_lbsq == TRUE) %>%
+  ungroup()
+
+RFM_Seq_lb <- perf_calc(index = "rfm_sq", match = Seq_lb$rfm_sq, intro = "Based on sequential RFM with adjusting for the standard error of the response rate")
+RFM_Seq_lb
+```
+
+```{r}
+# Make a tibble containing profit and ROME
+Q14 <- tibble::tibble(
+  name = c("Indep RFM", "Sequen RFM", "Indiv BE RFM", "Indep lb RFM", "Seq lb RFM"),
+  Profit = c(as.numeric(RFM_Ind[1]), as.numeric(RFM_Seq[1]), as.numeric(RFM_Seq_indiv_be[1]), as.numeric(RFM_Ind_lb[1]), as.numeric(RFM_Seq_lb[1])),
+  ROME = c(as.numeric(RFM_Ind[2]), as.numeric(RFM_Seq[2]), as.numeric(RFM_Seq_indiv_be[2]), as.numeric(RFM_Ind_lb[2]), as.numeric(RFM_Seq_lb[2]))
+) %>%
+  mutate(name = factor(name, levels = name))
+```
+
+```{r}
+ggplot(Q14, aes(x = name, y = Profit)) + 
+  geom_bar(stat = 'identity') + 
+  geom_text(aes(label = format_nr(Profit, dec = 0)), vjust = 2) +
+  labs(title = "Pofit information for 5 methods")
+```
+
+```{r}
+ggplot(Q14, aes(x = name, y = ROME)) + 
+  geom_bar(stat = 'identity') + 
+  geom_text(aes(label = format_nr(ROME, dec = 2)), vjust = 2) +
+  labs(title = "ROME information for 5 methods")
+```
+
+
+
+
+
