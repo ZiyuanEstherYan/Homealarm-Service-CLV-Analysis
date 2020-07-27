@@ -1,0 +1,517 @@
+---
+title: Intuit Quickbooks Upgrade
+output: html_document
+---
+
+* Team-lead GitLab id: rsm-s8hua
+* Group number: We don't know
+* Group name: UCSD Undergrad Alumni
+* Team member names: Shiyi Hua, Wan Qiu, Siwei Xie, Ziyuan Yan
+
+```{r r_setup, include = FALSE}
+## initial settings
+knitr::opts_chunk$set(
+  comment = NA,
+  echo = TRUE,
+  error = TRUE,
+  cache = FALSE,
+  message = FALSE,
+  dpi = 144,
+  warning = FALSE
+)
+
+## width to use when printing tables etc.
+options(
+  width = 250,
+  scipen = 100,
+  max.print = 5000,
+  stringsAsFactors = FALSE
+)
+
+## load radiant packages if needed
+if (!exists("r_environment")) library(radiant)
+```
+
+<style>
+.btn, .form-control, pre, code, pre code {
+  border-radius: 4px;
+}
+.table {
+  width: auto;
+}
+ul, ol {
+  padding-left: 18px;
+}
+code, pre, pre code {
+  overflow: auto;
+  white-space: pre;
+  word-wrap: normal;
+}
+code {
+  color: #c7254e;
+  background-color: #f9f2f4;
+}
+pre {
+  background-color: #ffffff;
+}
+</style>
+
+## Setup
+
+Please complete this Rmarkdown document with your group by answering the questions in `intuit.pdf` on Canvas (week6/). Create an HTML file with all your results and comments and push both the Rmarkdown and HTML file to GitLab when your team is done. All results MUST be reproducible (i.e., the TA and I must be able to recreate the HTML from the Rmarkdown file without changes or errors). This means that you should NOT use any R-packages that are not part of the rsm-msba-spark docker container.
+
+This is the first group assignment for MGTA 455 and you will be using git and GitLab. If two people edit the same file at the same time you could get what is called a "merge conflict". git will not decide for you who's change to accept so the team-lead will have to determine which edits to use. To avoid merge conflicts, **always** click "pull" in Rstudio before you start working on any files. Then, when you are done, save and commit your changes, and then push them to GitLab. Make "pull-first" a habit!
+
+If multiple people are going to work on the assignment at the same time I recommend you work on different files. You can use `source` to include R-code in your Rmarkdown document or include other R(markdown) documents into the main assignment file. 
+
+Group work-flow tips as discussed during ICT in Summer II are shown below:
+
+* Pull, edit, save, stage, commit, and push
+* Schedule who does what and when
+* Try to avoid working simultaneously on the same file 
+* If you are going to work simultaneously, do it in different files, e.g., 
+    - assignment1_john.R, assignment1_susan.R, assignment1_wei.R 
+    - assignment_1a.R, assignment_1b.R, assignment_1c.R
+* Use the `source` command to bring different pieces of code together into an Rmarkdown document or into an R-code file
+* Alternatively, use _child_ in Rmarkdown to include a part of a report
+* For (very) big projects use 'branches' to avoid conflicts (and stay on your branch)
+
+A graphical depiction of the group work-flow is shown below:
+
+![](../images/git-group-workflow.png)
+
+Tutorial videos about using Git, GitLab, and GitGadget for group assignments:
+
+* Setup the MSBA server to use Git and GitLab: https://youtu.be/oUrI7G3NHDg
+* Dealing with Merge Conflicts: https://youtu.be/elq5UUG0RbE
+* Group assignment practice: https://youtu.be/uwqUHl3z37o
+
+Additional resources on git are linked below:
+
+* http://happygitwithr.com
+* http://r-pkgs.had.co.nz/git.html
+* http://stackoverflow.com/questions/tagged/git or just a google search
+* https://try.github.io
+* https://www.manning.com/books/git-in-practice
+* https://github.com/GitInPractice/GitInPractice#readme
+
+
+```{r}
+## loading the data (do NOT change the data)
+intuit75k <- readr::read_rds("../data/intuit75k.rds")
+```
+
+## Question answers
+### Sequential RFM Model
+```{r}
+library(tidyverse)
+
+intuitRFM <- intuit75k %>%
+  mutate(rec_sq = xtile(last, 5)) %>%
+  group_by(rec_sq) %>%
+  mutate(freq_sq = xtile(numords, 5, rev = TRUE)) %>%
+  group_by(rec_sq, freq_sq) %>%
+  mutate(mon_sq = xtile(dollars, 5, rev = TRUE)) %>%
+  mutate(rfm_sq = paste0(rec_sq, freq_sq, mon_sq))
+
+breakeven_rfm <- 1.41 / 60
+breakeven_rfm
+
+intuitRFM_train <- intuitRFM %>%
+  filter(training == 1) %>%
+  group_by(rfm_sq) %>%
+  mutate(mailto_sq = mean(res1 == "Yes") > breakeven_rfm)
+
+target_bin <- intuitRFM_train %>%
+  filter(mailto_sq == TRUE)
+
+target_test <- intuitRFM %>%
+  filter(training == 0) %>%
+  filter(rfm_sq %in% target_bin$rfm_sq)
+
+actual_test <- target_test %>%
+  filter(res1 == "Yes")
+
+exp_prof_rfm <- nrow(actual_test) * 60 - nrow(target_test) * 1.41
+exp_prof_rfm
+ROME_rfm <- exp_prof_rfm / (nrow(target_test) * 1.41)
+ROME_rfm
+
+```
+
+
+### Logistic Model (Stepwise and Lower Bound)
+```{r}
+## change variable type
+intuit75k <- mutate_at(intuit75k, .vars = vars(zip_bins), .funs = as_factor)
+intuit75k <- mutate_at(intuit75k, .vars = vars(bizflag), .funs = as_factor)
+intuit75k <- mutate_at(intuit75k, .vars = vars(version1), .funs = as_factor)
+intuit75k <- mutate_at(intuit75k, .vars = vars(owntaxprod), .funs = as_factor)
+intuit75k <- mutate_at(intuit75k, .vars = vars(upgraded), .funs = as_factor)
+```
+
+```{r}
+## transform variable
+intuit75k <- mutate_ext(intuit75k, .vars = vars(dollars, sincepurch), .funs = log, .ext = "_ln")
+```
+
+```{r}
+# Stepwise
+result1 <- logistic(
+  intuit75k, 
+  rvar = "res1", 
+  evar = c(
+    "zip_bins", "sex", "bizflag", "numords", "last", "version1", 
+    "owntaxprod", "upgraded", "dollars_ln", "sincepurch_ln"
+  ), 
+  lev = "Yes", 
+  check = "stepwise-backward", 
+  data_filter = "training == 1"
+)
+summary(result1)
+```
+
+```{r}
+# Prediction
+intuitLogit <- intuit75k
+
+pred <- predict(result1, pred_data = intuitLogit, conf_lev = 0.9, se = TRUE)
+
+intuitLogit <- store(intuitLogit, pred, name = c("prob_logit", "prob_logit_lb", "prob_logit_ub"))
+
+intuitLogit <- intuitLogit %>%
+  mutate(target_logit = ifelse(prob_logit > breakeven_rfm, TRUE, FALSE), target_logit_lb = ifelse(prob_logit_lb > breakeven_rfm, TRUE, FALSE))
+
+intuitLogit <- intuitLogit %>%
+  mutate(list_logit = prob_logit*0.5 > breakeven_rfm)
+
+intuitLogit_test <- intuitLogit %>%
+  filter(training == 0) %>%
+  mutate(actual = ifelse(res1 == "Yes", TRUE, FALSE))
+
+# Confusion matrix (Stepwise)
+matrix <- table(intuitLogit_test$actual, intuitLogit_test$target_logit)
+matrix
+```
+
+```{r}
+# Accuracy (Stepwise)
+accuracy <- (matrix[1,1] + matrix[2,2])/sum(matrix)
+accuracy
+```
+
+```{r}
+# Confusion matrix (Lower Bound)
+matrix_lb <- table(intuitLogit_test$actual, intuitLogit_test$target_logit_lb)
+matrix_lb
+```
+
+```{r}
+# Accuracy (Lower Bound)
+accuracy_lb <- (matrix_lb[1,1] + matrix_lb[2,2])/sum(matrix_lb)
+accuracy_lb
+```
+
+```{r}
+# Profit (Stepwise)
+target_normal <- intuitLogit_test %>%
+  filter(target_logit == TRUE)
+
+actual_normal <- target_normal %>%
+  filter(res1 == "Yes")
+
+exp_prof_logit <- nrow(actual_normal) * 60 - nrow(target_normal) * 1.41
+exp_prof_logit
+ROME_logit <- exp_prof_logit / (nrow(target_normal) * 1.41)
+ROME_logit
+```
+
+```{r}
+# Profit (Lower Bound)
+target_lb <- intuitLogit_test %>%
+  filter(target_logit_lb == TRUE)
+
+actual_lb <- target_lb %>%
+  filter(res1 == "Yes")
+
+exp_prof_lb <- nrow(actual_lb) * 60 - nrow(target_lb) * 1.41
+exp_prof_lb
+ROME_lb <- exp_prof_lb / (nrow(target_lb) * 1.41)
+ROME_lb 
+```
+
+
+### Neural Network (Deep Learning) Model - Inputs are Based on Logistic Regression
+```{r}
+# Get training set and test set
+train <- intuit75k %>% filter(training == 1)
+test <- intuit75k %>% filter(training == 0)
+```
+
+```{r}
+# Try neural network (deep learning) model with variables from the above stepwise logistic regression and randomly chosen parameters
+result <- nn(
+  intuit75k,
+  rvar = "res1",
+  evar = c("zip_bins", "numords", "dollars_ln", "last", "version1", "owntaxprod", "upgraded"),
+  lev = "Yes",
+  size = 3,
+  decay = 0.15,
+  seed = 1234,
+  data_filter = "training == 1"
+)
+
+# Optimize parameters
+cv.nn(result, K = 5, size = 1:3, decay = seq(0.05, 0.15, 0.05), seed = 1234, fun = profit, cost = 1.41, margin = 60)
+```
+
+```{r}
+# Run neural network (deep learning) model with output parameters
+result <- nn(
+  intuit75k,
+  rvar = "res1",
+  evar = c("zip_bins", "numords", "dollars_ln", "last", "version1", "owntaxprod", "upgraded"),
+  lev = "Yes",
+  size = 2,
+  decay = 0.05,
+  seed = 1234,
+  data_filter = "training == 1"
+)
+
+# Get prediction
+intuit75k$nn_pred <- predict(result, intuit75k)$Prediction
+```
+
+```{r}
+# Create a data frame with id, res1, and the above prediction
+eval_dat <- tibble::tibble(
+  id = test$id,
+  res1 = test$res1
+)
+eval_dat$nn <- predict(result, test)$Prediction
+```
+
+```{r}
+# Bootstrap 100 times
+bootstrap_dat <- tibble::tibble(
+  id = test$id,
+)
+
+for (i in 1:100){
+  train_temp <- sample_n(train, nrow(train), replace = TRUE)
+  result <- nn(
+    train_temp,
+    rvar = "res1",
+    evar = c("zip_bins","sex", "bizflag", "numords", "dollars_ln", "last", "sincepurch_ln", "version1", "owntaxprod", "upgraded"),
+    lev = "Yes",
+    size = 2,
+    decay = 0.15,
+    seed = 1234
+  )
+  bootstrap_dat[i] <- predict(result, test)$Prediction
+}
+```
+
+```{r}
+# Get 5th percentile
+eval_dat$nn_boot <- apply(bootstrap_dat,1,quantile,probs=c(.05))
+
+sum(eval_dat$nn != eval_dat$nn_boot)
+```
+
+```{r}
+# Get predictions from neural network model and bootstrap neural network model on the test set
+breakeven <- 1.41 / 60
+
+test$nn_pred <- eval_dat$nn > breakeven
+
+test$nn_pred_boot <- eval_dat$nn_boot > breakeven
+```
+
+```{r}
+# Confusion matrix and accuracy for neural network model
+table(test$res1, test$nn_pred)
+accuracy1 <- (957 + 8561) / (957 + 8561 + 146 + 12836)
+accuracy1
+```
+
+```{r}
+# Confusion matrix and accuracy for bootstrap neural network model
+table(test$res1, test$nn_pred_boot)
+accuracy2 <- (867+11994)/(867+11994+236+9403)
+accuracy2
+```
+
+```{r}
+# Profit for neural network model
+target_nn <- test %>%
+  filter(nn_pred == "TRUE")
+
+resp_nn <- test %>%
+  filter(nn_pred == "TRUE" & res1 == 'Yes')
+
+profit_nn  <- 60*nrow(resp_nn) - 1.41*nrow(target_nn)
+profit_nn
+ROME_nn <- profit_nn/(1.41*nrow(target_nn))
+ROME_nn
+```
+
+```{r}
+# Profit for bootstrap neural network model
+target_nn_boot <- test %>%
+  filter(nn_pred_boot == "TRUE")
+
+resp_nn_boot <- test %>%
+  filter(nn_pred_boot == "TRUE" & res1 == 'Yes')
+
+profit_nn_boot  <-  60*nrow(resp_nn_boot) - 1.41*nrow(target_nn_boot)
+profit_nn_boot
+ROME_nn_boot <- profit_nn_boot/(1.41*nrow(target_nn_boot))
+ROME_nn_boot
+```
+
+### Neural Network (Deep Learning) Model With Python, Please refer to the intuit.ipynb
+
+### Model Comparison
+```{r, echo=FALSE}
+profit_tibble <- tibble::tibble(
+  name = c("Sequential RFM", "Stepwise Logistic", "Lower Bound Logistic", "Neural Network", "Bootstrap Neutral Network", "Neural Network (Python)", "Neutral Network CV (Python)"),
+  Profit = c(33498.60, 38567.91, 37435.59, 37971.87, 37539.30, 36068.13, 37938.72),
+  ROME = c(1.28, 1.91, 2.16, 1.95, 2.59, 1.80, 1.79)) %>%
+  mutate(name = factor(name, levels = name))
+arrange(profit_tibble, desc(Profit))
+```
+
+We choose the stepwise logistic model since it has the highest profit.
+
+```{r}
+intuitLogit_test <- intuitLogit_test %>%
+  mutate(target_list = (list_logit == TRUE & res1 == 'No'))
+target_list <- tibble::tibble(
+  id = intuitLogit_test$id,
+  mailto_wave2 = intuitLogit_test$target_list
+)
+write.csv(target_list,"siwei_wan_ziyuan_shiyi.csv",row.names = FALSE)
+```
+
+Since We are choosing the Logit model, the predicted profit from the data set is 
+```{r}
+intuit75k <- readr::read_rds("../data/intuit75k.rds")
+breakeven_rfm <- 1.41 / 60
+
+intuit75k <- mutate_at(intuit75k, .vars = vars(zip_bins), .funs = as_factor)
+intuit75k <- mutate_at(intuit75k, .vars = vars(bizflag), .funs = as_factor)
+intuit75k <- mutate_at(intuit75k, .vars = vars(version1), .funs = as_factor)
+intuit75k <- mutate_at(intuit75k, .vars = vars(owntaxprod), .funs = as_factor)
+intuit75k <- mutate_at(intuit75k, .vars = vars(upgraded), .funs = as_factor)
+
+intuit75k <- mutate_ext(intuit75k, .vars = vars(dollars, sincepurch), .funs = log, .ext = "_ln")
+
+result1 <- logistic(
+  intuit75k, 
+  rvar = "res1", 
+  evar = c(
+    "zip_bins", "sex", "bizflag", "numords", "last", "version1", 
+    "owntaxprod", "upgraded", "dollars_ln", "sincepurch_ln"
+  ), 
+  lev = "Yes", 
+  check = "stepwise-backward"
+)
+summary(result1)
+
+intuitLogit <- intuit75k
+
+pred <- predict(result1, pred_data = intuitLogit, conf_lev = 0.9, se = TRUE)
+
+intuitLogit <- store(intuitLogit, pred, name = c("prob_logit", "prob_logit_lb", "prob_logit_ub"))
+
+intuitLogit <- intuitLogit %>%
+  mutate(target_logit = ifelse(prob_logit > breakeven_rfm, TRUE, FALSE), target_logit_lb = ifelse(prob_logit_lb > breakeven_rfm, TRUE, FALSE))
+
+intuitLogit <- intuitLogit %>%
+  mutate(list_logit = prob_logit*0.5 > breakeven_rfm,
+         target_list = (list_logit == TRUE & res1 == 'No'))
+
+resp <- intuitLogit %>%
+  filter(target_list == TRUE)
+
+
+exp_wave2 <- sum(intuitLogit$target_list == TRUE)
+resp_rate_wave2 <- mean(resp$prob_logit*0.5)
+
+exp_profit_wave2 <- 60*exp_wave2*resp_rate_wave2 - 1.41*exp_wave2
+exp_profit_wave2 
+
+perc <- exp_wave2/(sum(intuitLogit$res1 == 'No'))
+total_profit <- perc*(801821-38487)*resp_rate_wave2*60 - 1.41*perc*(801821-38487)
+total_profit 
+```
+
+Group: UCSD Undergrad Alumni
+Name: Siwei Xie, Wan Qiu, Shiyi Hua, Ziyuan Yan
+			
+			CASE 1: Intuit Quickbooks Upgrade 			
+
+Describe how you developed your predictive models, and discuss predictive performance for each model
+RFM Analysis:
+We choose sequential quantiles to construct an RFM index:  
+Create quantiles for recency(“last”)
+Within each recency quantile, create quantiles for frequency (“numords”)
+Within each recency frequency bin, create quantiles for monetary(“dollars”)
+The reason we use sequential quantiles method is that it provides a more even distribution of combined RFM scores, and takes into consideration that purchasing behavior (i.e., frequency and monetary) may change over time (recency) due to changes in pricing schemes or seasonal promotions.
+In order to decide the target group of wave-1 mail in the test set, we first choose bins in the training set that have “response rate” > “break even rate”, and then choose the same bins in the test set. After that, we calculate the actual response rate based on “res1” = “Yes” in the test set. 
+Predictive performance:
+profit_rfm = (margin of sales)\*(response rate in the number of mails we sent)\*(number of target in the test set) - cost_offer * (number of mails we sent) = 33498.6
+ROME = profit_rfm/cost = 1.281
+
+Logistic Model:
+change some types of variables to factors (“zipbins”, “bizflag”, “version1”, “owntaxprod”, “upgraded”). 
+Based on the plots of all variables, “dollars” and “sincepurch” is positively skewed, so we made log transformation to “dollars_ln” and “sincepurch_ln”.
+After stepwise, our logistic regression model has 7 explanatory variables:
+Explanatory variable: "zip_bins", "numords", "dollars_ln", "last", "version1", "owntaxprod", "upgraded"
+Response variable: res1 == “Yes”
+We predict the response probability with confidence level 90%, and label target_logit = TRUE when “predicted probability” > “break even rate”. Create a confusion matrix based on “target_logit” and “res1”.  
+profit_logit = (margin of sales)\*(number of true positive) - cost_offer * (number of mails we sent).
+Do the same thing for lower bound logistic regression. 
+Predictive performance:
+Based on the confusion matrix, the accuracy of logistic regression prediction is 0.4003556 and the accuracy of logistic regression lower bound prediction is 0.4854222.
+profit_logit = 38567.91
+ROME_logit = 1.906
+profit_logit_lb = 37435.59
+ROME_logit_lb = 2.158
+
+Neural Network Model:
+Used exact same variables as we used in logistic regression after stepwise.
+Ran the initial NN model with size 3 and decay of 0.15 on the training set.
+Used the cross-validation method of the NN model with K=5, size 1 to 3 and decay of 0.05, 0.1 and 0.15 to find parameters with the highest profit on the test set.
+Found the size to be 2 and decay is 0.06 to be used in the original model.
+Plugged in the optimized parameter to predict the probabilities, recorded as nn_pred.
+Used the bootstrap method, resampled 100 times on the training set and fitted into the model to predict probabilities.
+Found the 5th percentile for each row and recorded as nn_pred_boot.
+If prediction > break-even then predicted as TRUE else FALSE, then calculated the profit accordingly.
+profit_nn = 37971.87
+ROME_nn = 1.95
+profit_nn_boot = 37539.3
+ROME_boot = 2.59
+So we chose the normal NN model over the bootstrap method.
+
+How did you compare and evaluate different models?
+
+Profit: Stepwise Logistic > Neural Network >  Neural Network CV (Python) > Bootstrap Neural Network > Bootstrap Neural Network > Lower Bound Logistic > Neural Network (Python) > Sequential RFM
+ROME: Bootstrap Neural Network > Lower Bound Logistic > Neural Network > Stepwise Logistic > Neural Network (Python) > Neural Network CV (Python) > Sequential RFM
+
+Stepwise Logistic has the highest profit and 4th highest ROME. 
+Neural Network has the 2nd highest profit and 3rd highest ROME. 
+Overall, we think Stepwise Logistic is the best. 
+
+If you created new variables to include in the model, please describe these as well.
+Based on the plots of all variables, “dollars” and “sincepurch” are positively skewed, so we create new columns that are log-transformed to “dollars_ln” and “sincepurch_ln”.
+
+What criteria did you use to decide which customers should receive the wave-2 mailing?
+We ultimately chose the (stepwise) logistic regression as our optimal model. We first applied the (stepwise) logistic regression to the whole dataset and got predicted response probability. Next, we multiplied each predicted response probability by 0.5 to get the predicted wave-2 response probability. Then in the test set, we filtered customers whose predicted wave-2 response probability is greater than the breakeven (0.0235) and were labeled res1 == “No” (i.e. those who did not upgrade their version in the wave-1 mailing). We decide that those customers should receive the wave-2 mailing.
+
+How much profit do you anticipate from the wave-2 mailing?
+$324480.809
+
+What did you learn about the type of businesses that are likely to upgrade?
+From the result of our final Logistic model we found that the coefficients of the number of orders, version 1, own tax products, upgraded and dollars are positive, which means that those factors increase the likelihood of upgrading. We conclude that businesses that placed more orders, currently own version 1 software, own other tax products, had upgraded in the past and spent more money are likely to upgrade.
