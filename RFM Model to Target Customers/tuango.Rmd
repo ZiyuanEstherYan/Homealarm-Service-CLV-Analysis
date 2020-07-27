@@ -1,0 +1,344 @@
+---
+title: Tuango - RFM Analysis for Mobile App Push Messaging
+output: html_document
+---
+
+* Name: Ziyuan Yan
+* GitLab id: @rsm-ziy062
+
+```{r r_setup, include = FALSE}
+## initial settings
+knitr::opts_chunk$set(
+  comment = NA,
+  echo = TRUE,
+  error = TRUE,
+  cache = FALSE,
+  message = FALSE,
+  dpi = 96,
+  warning = FALSE
+)
+
+## width to use when printing tables etc.
+options(
+  width = 250,
+  scipen = 100,
+  max.print = 5000,
+  stringsAsFactors = FALSE
+)
+
+## make all required libraries available by loading radiant package if needed
+if (!exists("r_environment")) library(radiant)
+```
+
+<style>
+.btn, .form-control, pre, code, pre code {
+  border-radius: 4px;
+}
+.table {
+  width: auto;
+}
+ul, ol {
+  padding-left: 18px;
+}
+code, pre, pre code {
+  overflow: auto;
+  white-space: pre;
+  word-wrap: normal;
+}
+code {
+  color: #c7254e;
+  background-color: #f9f2f4;
+}
+pre {
+  background-color: #ffffff;
+}
+</style>
+
+## Setup
+
+Please complete this Rmarkdown document by answering questions 1-13 in `tuango.pdf` on Canvas (week4/). The code block below loads the data you need for this first Rmarkdown file. Create an HTML file with all your results and answers and push both the Rmarkdown and HTML file to GitLab when you are done. All results MUST be reproducible (i.e., the TA and I must be able to recreate the results without changes or errors)
+
+Use "tuango_post.Rmd" to answer Question 14 in `tuango.pdf`
+
+```{r}
+## loading the data - this dataset must NOT be changed
+tuango <- readr::read_rds("data/tuango.rds")
+```
+
+```{r}
+library(tidyverse)
+library(radiant)
+```
+
+## Question answers
+
+## Part I: Preliminary and Quintile Analysis
+
+### Question 1
+```{r}
+Q1 <- mean(tuango$buyer == "yes")
+print(paste0(Q1, " of customers reponsded after the push message."))
+```
+
+### Question 2
+```{r}
+Q2 <- tuango %>%
+  filter(ordersize != 0) 
+
+Q2 <- sum(tuango$ordersize)/nrow(Q2)
+print(paste0("The average amount spent on the Karaoke deal by customers that bought one (or more) is ", Q2, " RMB."))
+```
+
+### Question 3
+```{r}
+tuango <- tuango %>%
+  mutate(rec_iq = xtile(recency, n = 5), 
+         freq_iq = xtile(frequency, n = 5, rev = TRUE),
+         mon_iq = xtile(monetary, n = 5, rev = TRUE))
+```
+
+### Question 4
+```{r}
+rec_resp <- tuango %>%
+  group_by(rec_iq) %>%
+  summarize(rec_response = mean(buyer == "yes"))
+
+ggplot(rec_resp, aes(x = rec_iq, y = rec_response)) + 
+  geom_bar(stat = 'identity') + 
+  labs(title = "Response rate per recency")
+```
+```{r}
+freq_resp <- tuango %>%
+  group_by(freq_iq) %>%
+  summarize(freq_response = mean(buyer == "yes"))
+
+ggplot(freq_resp, aes(x = freq_iq, y = freq_response)) + 
+  geom_bar(stat = 'identity') + 
+  labs(title = "Response rate per frequency")
+```
+```{r}
+mon_resp <- tuango %>%
+  group_by(mon_iq) %>%
+  summarize(mon_response = mean(buyer == "yes"))
+
+ggplot(mon_resp, aes(x = mon_iq, y = mon_response)) + 
+  geom_bar(stat = 'identity') + 
+  labs(title = "Response rate per monetary")
+```
+
+### Question 5
+```{r}
+Q5 <- tuango %>%
+  filter(buyer == "yes") %>%
+  mutate(rec_iq = xtile(recency, n = 5), 
+         freq_iq = xtile(frequency, n = 5, rev = TRUE),
+         mon_iq = xtile(monetary, n = 5, rev = TRUE))
+```
+
+```{r}
+rec_avg_spent <- Q5 %>%
+  group_by(rec_iq) %>%
+  summarize(avg_spent = mean(monetary))
+
+ggplot(rec_avg_spent, aes(x = rec_iq, y = avg_spent)) + 
+  geom_bar(stat = 'identity') + 
+  labs(title = "Average amount spent per recency in RMB")
+```
+
+```{r}
+freq_avg_spent <- Q5 %>%
+  group_by(freq_iq) %>%
+  summarize(avg_spent = mean(monetary))
+
+ggplot(freq_avg_spent, aes(x = freq_iq, y = avg_spent)) + 
+  geom_bar(stat = 'identity') + 
+  labs(title = "Average amount spent per freqency in RMB")
+```
+
+```{r}
+mon_avg_spent <- Q5 %>%
+  group_by(mon_iq) %>%
+  summarize(avg_spent = mean(monetary))
+
+ggplot(mon_avg_spent, aes(x = mon_iq, y = avg_spent)) + 
+  geom_bar(stat = 'identity') + 
+  labs(title = "Average amount spent per monetary in RMB")
+```
+
+### Question 6
+##### For recency quintiles: Response rate drops as size of the order goes up. 
+##### For frequency quintiles: Response rate drops relatively slow sompared to recency quintiles as size of the order goes up. 
+##### For monetary quintiles: Response rate drops as size of the order goes up. mon_iq 1 and 2 have similar response rate. 
+
+## Part II: Profitability Analysis
+```{r}
+tuango <- tuango %>%
+  mutate(rfm_iq = paste0(rec_iq, freq_iq, mon_iq))
+```
+
+```{r}
+tuango <- tuango %>%
+  group_by(rec_iq) %>%
+  mutate(freq_sq = xtile(frequency, n = 5, rev = TRUE)) %>%
+  ungroup()
+
+tuango <- tuango %>%
+  group_by(rec_iq, freq_sq) %>%
+  mutate(mon_sq = xtile(monetary, n = 5, rev = TRUE)) %>%
+  ungroup()
+
+tuango <- tuango %>%
+  mutate(rfm_sq = paste0(rec_iq, freq_sq, mon_sq))
+```
+
+### Question 7
+```{r}
+cost_offer <- 2.5
+margin_sales <- Q2 * 0.5
+break_even <- cost_offer/margin_sales
+print(paste0("The break-even response rate is ", break_even, "."))
+```
+
+### Question 8
+```{r}
+profit <- Q2*250902*Q1*0.5 - cost_offer*250902
+ROME <- profit/(cost_offer*250902)
+print(paste0("If I offer the deal to all 250,902 remaining customers, the projected profit in RMB is ", profit, " , and the return on marketing expenditures(ROME) is ", ROME, "."))
+```
+
+### Question 9
+```{r}
+perf_calc <- function(sms, intro) {
+  perc_sms <- mean(sms)
+  nr_sms <- 250902 * perc_sms # number of sms to send. Only send to the groups where response rate > break-even rate
+  
+  dat <- filter(tuango, sms == TRUE) # groups that have response rate > break-even rate
+  rep_rate <- mean(dat$buyer == "yes") # response rate in the filtered group
+  nr_resp <- nr_sms * rep_rate # number of response
+  
+  sms_cost <- 2.5 * nr_sms
+  profit <- Q2 * nr_resp * 0.5 - sms_cost
+  ROME <- profit / sms_cost
+  
+  print(paste0(intro, ", the expected response rate is ", rep_rate, ", the SMS cost is ", sms_cost, ", the projected profit is ", profit, ", and the ROME is ", ROME, "."))
+  return(list(response_rate = rep_rate, sms_cost = sms_cost, profit = profit, ROME = ROME))
+}
+```
+
+#### Independent RFM
+```{r}
+## sms TRUE or FALSE
+tuango <- tuango %>%
+  group_by(rfm_iq) %>%
+  mutate(smsto_iq = mean(buyer == "yes") > break_even) %>%
+  ungroup()
+
+res_iq <- perf_calc(sms = tuango$smsto_iq, intro = "Based on independent RFM")
+```
+
+#### Sequential RFM
+```{r}
+## sms TRUE or FALSE
+tuango <- tuango %>%
+  group_by(rfm_sq) %>%
+  mutate(smsto_sq = mean(buyer == "yes") > break_even) %>%
+  ungroup()
+
+res_sq <- perf_calc(sms = tuango$smsto_sq, intro = "Based on sequential RFM")
+```
+
+### Question 10
+##### rfm_iq generates more TRUE than rfm_sq. The two approaches generally yield the same RFM index for any given customer. 
+##### Pros of independent quintile: Easy to interpret. 
+##### Cons of independent quintile: There may be a less even distribution of combined RFM scores with some RFM score segments having no customers.
+##### Pros of sequential quintile: Provide a more even distribution of combined RFM scores, and takes into consideration that purchasing behavior (i.e., frequency and monetary) may change over time (recency) due to changes in pricing schemes or seasonal promotions. 
+##### Cons of sequential quintile: Hard to interpret. 
+
+### Question 11
+
+#### Sequential RFM
+```{r}
+## sms TRUE or FALSE
+Q11 <- tuango %>%
+  filter(ordersize != 0) %>%
+  group_by(rfm_sq) %>%
+  summarize(break_even_sq = 2.5/(mean(ordersize)*0.5))
+
+tuango <- tuango %>%
+  left_join(Q11, by = "rfm_sq")
+
+tuango[is.na(tuango)] <- 0
+
+tuango <- tuango %>%
+  group_by(rfm_sq) %>%
+  mutate(smsto_sq_q11 = mean(buyer == "yes") > break_even_sq) %>%
+  ungroup()
+
+res_sq_q11 <- perf_calc(sms = tuango$smsto_sq_q11, intro = "Based on sequential RFM adjusting for the standard error of the response rate in each cell")
+```
+
+### Question 12
+
+#### Independent RFM
+```{r}
+## sms TRUE or FALSE
+tuango <- tuango %>%
+  group_by(rfm_iq) %>%
+  mutate(smsto_lbiq = (mean(buyer == "yes") - 1.64 * seprop(buyer == "yes")) > break_even) %>%
+  ungroup()
+
+res_iq_q12 <- perf_calc(sms = tuango$smsto_lbiq, intro = "Based on independent RFM adjusting for the standard error of the response rate in each cell")
+```
+
+#### Sequential RFM
+```{r}
+tuango <- tuango %>%
+  group_by(rfm_sq) %>%
+  mutate(smsto_lbsq = (mean(buyer == "yes") - 1.64 * seprop(buyer == "yes")) > break_even) %>%
+  ungroup()
+
+res_sq_q12 <- perf_calc(sms = tuango$smsto_lbsq, intro = "Based on sequantial RFM adjusting for the standard error of the response rate in each cell")
+```
+
+##### Implications drawn from the difference in predicted performance compared to question 9: After ajusting for the standard error of the response rate in each cell, projected profit is lower, but ROME is a lot higher. This is because by adjusting for the standard error of the response rate, we eliminate inaccurate prediction from targeting and reduce the number of people that we want to send sms. We improved the accuracty and gained more profit. 
+
+### Question 13
+```{r}
+## make a tibble (data.frame) with results
+dat <- tibble::tibble(
+  name = c("Q9_iq", "Q9_sq", "Q11_sq", "Q12_iq", "Q12_sq"),
+  Profit = c(res_iq$profit, res_sq$profit, res_sq_q11$profit, res_iq_q12$profit, res_sq_q12$profit),
+  ROME = c(res_iq$ROME, res_sq$ROME, res_sq_q11$ROME, res_iq_q12$ROME, res_sq_q12$ROME)
+) %>%
+  mutate(name = factor(name, levels = name))
+```
+
+```{r}
+ggplot(dat, aes(x = name, y = Profit)) + 
+  geom_bar(stat = 'identity') + 
+  geom_text(aes(label = format_nr(Profit, dec = 0)), vjust = 2) +
+  labs(title = "Pofit information for Q9, Q11, Q12")
+```
+
+```{r}
+ggplot(dat, aes(x = name, y = ROME)) + 
+  geom_bar(stat = 'identity') + 
+  geom_text(aes(label = format_nr(ROME, dec = 2)), vjust = 2) +
+  labs(title = "ROME information for Q9, Q11, Q12")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
