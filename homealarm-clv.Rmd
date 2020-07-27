@@ -1,0 +1,284 @@
+---
+title: "Home Alarm CLV"
+output: html_document
+---
+
+```{r r_setup, include = FALSE}
+## initial settings
+knitr::opts_chunk$set(
+  comment = NA,
+  echo = TRUE,
+  error = TRUE,
+  cache = FALSE,
+  message = FALSE,
+  dpi = 96,
+  warning = FALSE
+)
+
+## width to use when printing tables etc.
+options(
+  width = 250,
+  scipen = 100,
+  max.print = 5000,
+  stringsAsFactors = FALSE
+)
+```
+
+<style>
+.btn, .form-control, pre, code, pre code {
+  border-radius: 4px;
+}
+.table {
+  width: auto;
+}
+ul, ol {
+  padding-left: 18px;
+}
+code, pre, pre code {
+  overflow: auto;
+  white-space: pre;
+  word-wrap: normal;
+}
+code {
+  color: #c7254e;
+  background-color: #f9f2f4;
+}
+pre {
+  background-color: #ffffff;
+}
+</style>
+
+Prepare "Home Alarm, Inc.: Assessing Customer Lifetime Value" for class discussion and as an individual assignment and submit the assignment through GitLab. Be VERY clear about where results are coming from and what assumptions you are making in your R code. It is in your best interest that we do not have to struggle to figure out where your numbers came from. The assignment (pdf) is on Canvas (week2/homealarm-clv.pdf). Example Excel calculations are also on Canvas (week1/aws-clv.xlsx and week1/notflix-cls.xlsx).
+
+## Setup
+
+Create an Rmarkdown document in which you calculate the CLV for a customer that uses auto-pay and for a customer that does not use auto-pay and answer question 1 through 4 in the assignment PDF.
+
+## Hints
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>. Go to http://commonmark.org/help/ for a 10-minute interactive Markdown tutorial
+
+When you click the **Knit** button in Rstudio, a document will be generated that includes both the text you type as well as the output of any embedded R-code chunks within the document.
+
+## Assumptions
+
+1. Both auto-pay and non auto-pay clients pay at the end of each month (pessimistic)
+2. Contracts for residential customers were renewed or canceled annually, thus revenue, service cost and marketing cost changes annually.
+3. Discount Rate changes annually. In the table we are using monthly discount rate converted from annully discount rate. 
+4. Churn Rate changes annually.
+5. Initial RMR for the coming year is $40. 
+
+## Analysis
+
+The code chunk below contains information attrition notifications from the table on page 3 of the assignment PDF.
+
+```{r}
+## Attrition notifications
+churn <- tibble::tibble(
+  no_autopay = c(0.084, 0.122, 0.162, 0.154, 0.134, 0.120, 0.111, 0.096, 0.086),
+  autopay = c(0.032, 0.070, 0.097, 0.103, 0.095, 0.078, 0.069, 0.059, 0.053)
+)
+```
+
+Please generate an HTML (Notebook) with your answers to all the questions listed in the homealarm-clv.pdf file on Canvas. When you have finished editing the Rmarkdown document and generated the HTML report make sure to save, commit, and push to GitLab. We will collect all files from GitLab after the due date.
+
+Note: Gitlab will automatically tests if your work is fully reproducible each time to "push" changes (see .gitlab-ci.yml for the configuration). If you get an email from GitLab.com stating that there was an error it suggests a problem in your code. Note that the setup for the Home Alarm assignment will *not* test if your analysis is correct. Only if the code is valid and runs without issue in the docker container.
+
+```{r}
+Initial_RMR <- 40 # Initial average RMR for customer during the coming year
+Initial_Service_Cost <- 6 # Initial monthly Service Cost for the coming year
+Initial_Market_Cost <- 2 # Initial monthly Marketing Cost for the coming year
+revenue_rt_annual <- 0.03 # Annual revenue growth rate
+discount_rt_annual <- 0.1 # Annual discount rate
+discount_rt_monthly <- (1+discount_rt_annual)^(1/12)-1 # Monthly discount rate
+```
+
+## Auto-pay
+
+#### Create an empty table for auto-pay
+```{r}
+auto_pay <- data.frame(matrix(ncol = 97, nrow = 10))
+
+row <- c("Revenue", "Service Cost", "Marketing Cost", "Customer Profit", "Churn/Attrition Rate", "Prob. of being active at the end of the period", "Profit expected on average", "Discount #", "Present value of expected profits", "CLV")
+row.names(auto_pay) <- row
+
+column <- c("Calc.")
+for (i in 1:96) {
+  column <- append(column, paste("Month", i))
+}
+colnames(auto_pay) <- column
+```
+
+#### Fill in the "Calc." column
+```{r}
+rownum <- 1:10
+for (r in rownum) {
+  if(r != 8) {
+    auto_pay[r, 1] <- 0
+  }
+}
+
+auto_pay[6, 1] <- 1
+```
+
+#### Fill in the "Churn/Attrition Rate" row
+```{r}
+n <- 0
+month <- 0
+
+for (m in 2:97) {
+  month <- month + 1
+  if(month%%12 == 1) {
+    n <- n + 1
+    auto_pay[5, m] <- churn[n, 2]
+  } else {
+    auto_pay[5, m] <- 0
+  }
+  # Churn rate = 0 for year 2
+  auto_pay[5, 2] <- 0
+}
+```
+
+#### Fill in the auto-pay table
+```{r}
+rownum <- 1:10
+year <- 2
+month <- 1
+
+# Loop through every column
+for (m in 2:97) {
+  
+  # Fill in the "Discount #" row
+  auto_pay[8, m] <- m-1
+  
+  # Fill in the "Revenue", "Service Cost" and "Marketing Cost" row
+  auto_pay[1, m] <- Initial_RMR*(1+revenue_rt_annual)^(year-2)
+  auto_pay[2, m] <- Initial_Service_Cost*(1+revenue_rt_annual)^(year-2)
+  auto_pay[3, m] <- Initial_Market_Cost*(1+revenue_rt_annual)^(year-2)
+  month <- month + 1
+  
+  if(month%%12 == 1) {
+    year <- year + 1
+  }
+  
+  # Fill in the "Customer Profit" row
+  auto_pay[4, m] <- auto_pay[1, m] - auto_pay[2, m] - auto_pay[3, m]
+  
+  # Fill in the "Prob. of being active at the end of the period" row
+  auto_pay[6, m] <- auto_pay[6, m-1] * (1-auto_pay[5, m])
+  
+  # Fill in the "Profit expected on average" row
+  auto_pay[7, m] <- auto_pay[6, m] * auto_pay[4, m]
+  
+  # Fill in the "Present value of expected profits" row
+  auto_pay[9, m] <- auto_pay[7, m]/((1+discount_rt_monthly)^auto_pay[8, m])
+  
+  # Fill in the "CLV" row
+  auto_pay[10, m] <- auto_pay[10, m-1] + auto_pay[9, m]
+}
+```
+
+```{r}
+print(auto_pay[10, 97]) # Answer to Question 1
+```
+
+### Question 1: The CLV of a customer who uses auto-pay is $1803.66. 
+
+
+## Non Auto-pay
+
+#### Create an empty table for non auto-pay
+```{r}
+non_auto_pay <- data.frame(matrix(ncol = 97, nrow = 10))
+
+row <- c("Revenue", "Service Cost", "Marketing Cost", "Customer Profit", "Churn/Attrition Rate", "Prob. of being active at the end of the period", "Profit expected on average", "Discount #", "Present value of expected profits", "CLV")
+row.names(non_auto_pay) <- row
+
+column <- c("Calc.")
+for (i in 1:96) {
+  column <- append(column, paste("Month", i))
+}
+colnames(non_auto_pay) <- column
+```
+
+#### Fill in the "Calc." column
+```{r}
+rownum <- 1:10
+for (r in rownum) {
+  if(r != 8) {
+    non_auto_pay[r, 1] <- 0
+  }
+}
+
+non_auto_pay[6, 1] <- 1
+```
+
+#### Fill in the "Churn/Attrition Rate" row
+```{r}
+n <- 0
+month <- 0
+
+for (m in 2:97) {
+  month <- month + 1
+  if(month%%12 == 1) {
+    n <- n + 1
+    non_auto_pay[5, m] <- churn[n, 1]
+  } else {
+    non_auto_pay[5, m] <- 0
+  }
+  # Churn rate = 0 for year 2
+  non_auto_pay[5, 2] <- 0
+}
+```
+
+#### Fill in the non auto-pay table
+```{r}
+rownum <- 1:10
+year <- 2
+month <- 1
+
+# Loop through every column
+for (m in 2:97) {
+  
+  # Fill in the "Discount #" row
+  non_auto_pay[8, m] <- m-1
+  
+  # Fill in the "Revenue", "Service Cost" and "Marketing Cost" row
+  non_auto_pay[1, m] <- Initial_RMR*(1+revenue_rt_annual)^(year-2)
+  non_auto_pay[2, m] <- Initial_Service_Cost*(1+revenue_rt_annual)^(year-2)
+  non_auto_pay[3, m] <- Initial_Market_Cost*(1+revenue_rt_annual)^(year-2)
+  month <- month + 1
+  
+  if(month%%12 == 1) {
+    year <- year + 1
+  }
+  
+  # Fill in the "Customer Profit" row
+  non_auto_pay[4, m] <- non_auto_pay[1, m] - non_auto_pay[2, m] - non_auto_pay[3, m]
+  
+  # Fill in the "Prob. of being active at the end of the period" row
+  non_auto_pay[6, m] <- non_auto_pay[6, m-1] * (1-non_auto_pay[5, m])
+  
+  # Fill in the "Profit expected on average" row
+  non_auto_pay[7, m] <- non_auto_pay[6, m] * non_auto_pay[4, m]
+  
+  # Fill in the "Present value of expected profits" row
+  non_auto_pay[9, m] <- non_auto_pay[7, m]/((1+discount_rt_monthly)^non_auto_pay[8, m])
+  
+  # Fill in the "CLV" row
+  non_auto_pay[10, m] <- non_auto_pay[10, m-1] + non_auto_pay[9, m]
+}
+```
+
+```{r}
+print(non_auto_pay[10, 97]) # Answer to Qustion 2
+```
+### Question 2: The CLV of a customer who does not use auto-pay is $1553.723.
+
+### Question 3: The maximum amount Home Alarm should spend on incentives to convert an existing customer to auto-pay is $1803.66-$1553.72=$249.94.
+
+### Question 4: 
+#### 1. The one time installation cost for Home Alarm is $492-$195=$297, which is greater than $249.94, the maximum amount to convert. Therefore, Home Alarm can offer auto-pay customers a reduction of the installation fee that is less than $249.94. For example, if customers choose to convert to auto-pay, they can have 50% of the installation fee back. 
+#### 2. Offer fixed fees for auto-pay customers instead of a 3% annual growth (RMR = $40 for the entire 8 years). In this case, CLV in this case is $1635.04, still higher than non auto-pay with a 3% annual rate increase in fees. In fact, Home Alarm can offer any rate less than 3%. 
+#### 3. Home Alarm can spend more on advertisement, recommend this service to customers, etc. The average cost of doing so to each customer should be less than $249.94.
+
