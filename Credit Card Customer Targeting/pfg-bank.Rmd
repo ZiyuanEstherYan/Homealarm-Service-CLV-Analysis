@@ -1,0 +1,369 @@
+---
+title: "PFG-bank: Data Driven Credit Card Design"
+output: html_document
+---
+
+* Team-lead gitlab id: rsm-s8hua
+* Group name: UCSD Undergrad Alumni
+* Team member names: Shiyi Hua, Wan Qiu, Siwei Xie, Ziyuan Yan
+
+```{r r_setup, include = FALSE}
+## initial settings
+knitr::opts_chunk$set(
+  comment = NA,
+  echo = TRUE,
+  error = TRUE,
+  cache = FALSE,
+  message = FALSE,
+  dpi = 96,
+  warning = FALSE
+)
+
+## width to use when printing tables etc.
+options(
+  width = 250,
+  scipen = 100,
+  max.print = 5000,
+  stringsAsFactors = FALSE
+)
+
+## load radiant packages if neededi
+if (!exists("r_environment")) library(radiant)
+```
+
+<style>
+.btn, .form-control, pre, code, pre code {
+  border-radius: 4px;
+}
+.table {
+  width: auto;
+}
+ul, ol {
+  padding-left: 18px;
+}
+code, pre, pre code {
+  overflow: auto;
+  white-space: pre;
+  word-wrap: normal;
+}
+code {
+  color: #c7254e;
+  background-color: #f9f2f4;
+}
+pre {
+  background-color: #ffffff;
+}
+</style>
+
+## Setup
+
+Please complete this Rmarkdown document by answering the questions in `pfg-bank.pdf` on Canvas (week10/). The code block below will load the historical data from exhibits 1 and 2. Please DO NOT change the code used to load the data. Create an HTML (Notebook) file with all your results and comments and push both the Rmarkdown and HTML file to GitLab when you are done. All analysis results MUST be reproducible (i.e., the TA and I must be able to recreate the HTML from the Rmarkdown file without changes or errors).
+
+This is the final group assignment for MGTA 455 and you will be using git and GitLab. If two people edit the same file at the same time you could get what is called a "merge conflict". git will not decide for you who's change to accept so the team-lead will have to determine which edits to use. To avoid merge conflicts, always "pull" changes to the repo before you start working on any files. Then, when you are done, save and commit your changes, and then push them to GitLab. Make "pull first" a habit!
+
+```{r}
+exhibit1 <- readxl::read_excel("data/exhibits.xlsx", sheet = "exhibit1")
+exhibit2 <- readxl::read_excel("data/exhibits.xlsx", sheet = "exhibit2")
+```
+
+
+## Question answers
+
+
+### Test Round
+```{r}
+## Look for interaction
+result <- correlation(
+  exhibit1, 
+  vars = c("apr", "fixed_var", "annual_fee", "bk_score")
+)
+summary(result)
+```
+#### Comment: Since the absolute values of correlation between each pair of variables are all less than 0.5 (50%), we decide not to include interaction for our design of experiments.
+
+
+```{r}
+## Design of experiments
+result <- doe(
+  factors = c(
+    "apr; 14.9; 16.8; 19.8", 
+    "fixed_var; Fixed; Variable", 
+    "annual_fee; 0; 20", 
+    "bk_score; 150; 200; 250"
+  ), 
+  seed = 1234
+)
+summary(result, eff = TRUE, part = TRUE, full = TRUE)
+```
+#### Comment: There are 36 trials for full factorial. Without interaction, we choose 18 trials for partial factorial.
+#### Reasons: 1. Balanced = TRUE for 18 trials; 2. D-efficiency is the second high for 18 trials, which is 0.965 (the first high is 36 trials for full factorial); 3. 0.965 is very close to 1, so we think that it is not worthwhile to spend $18,000 more for full factorial; 4. We think that 18 trials of partial factorial are sufficiently representative of full factorial design.
+
+
+```{r}
+## Choose 18 trials for partial factorial
+result <- doe(
+  factors = c(
+    "apr; 14.9; 16.8; 19.8", 
+    "fixed_var; Fixed; Variable", 
+    "annual_fee; 0; 20", 
+    "bk_score; 150; 200; 250"
+  ), 
+  trials = 18, 
+  seed = 1234
+)
+summary(result, eff = TRUE, part = TRUE, full = TRUE)
+```
+#### Comment: We get 18 trials for partial factorial design, which is balanced and D-efficiency is 0.965, which is high. Then we fill these trials/combinations for our test round (round 1) with sample size as 4,000 for each cell.
+
+
+### Roll-out Round
+```{r}
+## Read round 1 data that we have explored and organized in excel
+round1_data <-  readxl::read_excel("data/round1_data.xlsx")
+
+## Gather columns of non_resp and resp
+round1_data_gathered <- gather(round1_data, response, freq, non_resp, resp, factor_key = TRUE)
+
+## Create data from a table
+round1_data_gathered_dat <- select(round1_data_gathered, offer, apr, fixed_var, annual_fee, nr_mailed, bk_score, response, freq) %>%
+  table2data("freq")
+```
+
+
+#### Comment: Since all four explanatory variables are factors rather than numerics, there will be no overfitting problem. Thus, we decide to use the entire dataset to train the model and predict on the entire dataset to see the AUC as well.
+#### Model 1: Logistic Regression
+```{r}
+## Look for potential interactions
+## apr vs. annual_fee
+result <- logistic(
+  round1_data_gathered_dat, 
+  rvar = "response", 
+  evar = c("apr", "fixed_var", "annual_fee", "bk_score"), 
+  lev = "resp"
+)
+
+pred <- predict(
+  result, 
+  pred_cmd = "apr = levels(apr), annual_fee = levels(annual_fee)"
+)
+plot(pred, xvar = "apr", color = "annual_fee")
+```
+#### Comment: Based on the above plot, apr has the small effect on the $20 annual fee but has the large effect on the no annual fee. Thus, there is an interaction between these two variables.
+
+
+```{r}
+## annual_fee vs. bk_score
+result <- logistic(
+  round1_data_gathered_dat, 
+  rvar = "response", 
+  evar = c("apr", "fixed_var", "annual_fee", "bk_score"), 
+  lev = "resp"
+)
+
+pred <- predict(
+  result, 
+  pred_cmd = "annual_fee = levels(annual_fee), bk_score = levels(bk_score)"
+)
+plot(pred, xvar = "annual_fee", color = "bk_score")
+```
+#### Comment: Based on the above plot, annual_fee has the small effect on the 150 and 200 bk_scores but has the large effect on the 250 bk_score. Thus, there is an interaction between these two variables.
+
+
+```{r}
+## apr vs. fixed_var
+result <- logistic(
+  round1_data_gathered_dat, 
+  rvar = "response", 
+  evar = c("apr", "fixed_var", "annual_fee", "bk_score"), 
+  lev = "resp"
+)
+
+pred <- predict(
+  result, 
+  pred_cmd = "apr = levels(apr), fixed_var = levels(fixed_var)"
+)
+plot(pred, xvar = "apr", color = "fixed_var")
+```
+#### Comment: Based on the above plot, from 16.8% to 19.8%, apr has the small effect on fixed_var, but from 14.9% to 16.8%, apr has the large effect on fixed_var. Thus, we still conclude that there is an interaction between these two variables.
+
+
+```{r}
+## Run logistic regression with 3 pairs of interaction
+result_logit <- logistic(
+  round1_data_gathered_dat, 
+  rvar = "response", 
+  evar = c("apr", "fixed_var", "annual_fee", "bk_score"), 
+  lev = "resp",
+  int = c("apr:annual_fee", "annual_fee:bk_score", "apr:fixed_var")
+)
+summary(result_logit)
+```
+
+
+```{r}
+## Get predicted probabilities and AUC on the entire dataset
+pred_logit <- predict(result_logit, pred_data = round1_data_gathered_dat)
+auc(pred_logit$Prediction, round1_data_gathered_dat$response)
+```
+
+
+#### Model 2: Neural Network
+```{r}
+## Baseline neural network
+result_nn_base <- nn(
+  round1_data_gathered_dat, 
+  rvar = "response", 
+  evar = c("apr", "fixed_var", "annual_fee", "bk_score"), 
+  lev = "resp", 
+  seed = 1234
+)
+summary(result_nn_base, prn = TRUE)
+```
+
+
+```{r}
+## Cross-validation for neural network to get the optimal parameters in terms of maximizing AUC
+## cv.nn(result, K = 5, size = 1:5, decay = seq(0.1, 0.5, 0.1), seed = 1234)
+## Optimal size = 3, decay = 0.5
+```
+
+
+```{r}
+## Neural network with optimal parameters
+result_nn_cv <- nn(
+  round1_data_gathered_dat, 
+  rvar = "response", 
+  evar = c("apr", "fixed_var", "annual_fee", "bk_score"), 
+  lev = "resp", 
+  decay = 0.5,
+  size = 3,
+  seed = 1234
+)
+summary(result_nn_cv, prn = TRUE)
+```
+
+
+```{r}
+## Get predicted probabilities and AUC on the entire dataset
+pred_nn <- predict(result_nn_cv, pred_data = round1_data_gathered_dat)
+auc(pred_nn$Prediction, round1_data_gathered_dat$response)
+```
+
+
+#### Model 3: XGBoost
+```{r}
+## Baseline XGBoost
+result_xgb_base <- gbt(
+  round1_data_gathered_dat, 
+  rvar = "response", 
+  evar = c("apr", "fixed_var", "annual_fee", "bk_score"), 
+  lev = "resp",
+  type = "classification",
+  seed = 1234
+)
+summary(result_xgb_base, prn = TRUE)
+```
+
+
+```{r}
+## Cross-validation for XGBoost to get the optimal parameters in terms of maximizing AUC
+## params <- list(max_depth = 1:6, learning_rate = seq(0.1, 0.5, 0.1))
+## cv.gbt(result, params = params, maximize = FALSE, trace = TRUE, seed = 1234)
+## Optimal max_depth = 4, learning_rate = 0.1
+```
+
+
+```{r}
+## XGBoost with optimal parameters
+result_xgb_cv <- gbt(
+  round1_data_gathered_dat, 
+  rvar = "response", 
+  evar = c("apr", "fixed_var", "annual_fee", "bk_score"), 
+  lev = "resp",
+  type = "classification",
+  seed = 1234,
+  max_depth = 4,
+  learning_rate = 0.1
+)
+summary(result_xgb_cv, prn = TRUE)
+```
+
+
+```{r}
+## Get predicted probabilities and AUC on the entire dataset
+pred_xgb <- predict(result_xgb_cv, pred_data = round1_data_gathered_dat)
+auc(pred_xgb$Prediction, round1_data_gathered_dat$response)
+```
+
+
+#### Comparison of 3 Models Based on AUC
+```{r}
+## Create the tibble
+AUC_tibble <- tibble::tibble(
+  Model = c("Logistic Regression", "Neural Network", "XGBoost"),
+  AUC = c(0.7242464, 0.7235992, 0.725292)) %>%
+  mutate(Model = factor(Model, levels = Model))
+arrange(AUC_tibble, desc(AUC))
+```
+#### Comment: Based on the AUC tibble, the AUC of XGBoost is only a little higher than Logistic Regression (about 0.001 = 0.1%), so it not better enough to choose XGBoost. Therefore, we choose Logistic Regression to do following predictions for easier understanding and interpretation.
+
+
+#### Prediction
+```{r}
+## Gather columns
+exhibit2_gathered <- gather(exhibit2, clv_bk, clv, clv150, clv200, clv250, factor_key = TRUE)
+
+## Create new variable(s)
+exhibit2_gathered <- mutate(exhibit2_gathered, bk_score = ifelse(clv_bk == "clv150", 150, ifelse(clv_bk == "clv200", 200, 250)))
+
+## Change variable type
+exhibit2_gathered <- mutate_at(exhibit2_gathered, .vars = vars(bk_score), .funs = as_factor)
+
+## Make fixed_var as lower case
+exhibit2_gathered$fixed_var <- tolower(exhibit2_gathered$fixed_var)
+
+## Make apr, fixed_var, and annual_fee as factor
+exhibit2_gathered$apr <- as.factor(exhibit2_gathered$apr / 100)
+exhibit2_gathered$fixed_var <- as.factor(exhibit2_gathered$fixed_var)
+exhibit2_gathered$annual_fee <- as.factor(exhibit2_gathered$annual_fee)
+```
+
+
+```{r}
+## Predict the response rate on the 36 full combinations
+pred_resp <- predict(result_logit, pred_data = exhibit2_gathered)
+pred_resp$clv <- exhibit2_gathered$clv
+pred_resp$margin <- pred_resp$Prediction * pred_resp$clv
+pred_resp %>%
+  arrange(desc(margin)) %>%
+  slice(1:18)
+```
+#### Comment: Our strategy to send mails in roll-out round:
+#### 1. Rank by margin = prediction * clv.
+#### 2. For each bk_score group, send 60% of remaining number of mailings (60% * 226,000 = 135,600) to the combination (product offering) that generates highest margin, because the highest one is a lot higher than the 2nd and 3rd.
+#### 3. For each bk_score group, send 20% (20% * 226,000 = 45,200) of remaining mailings to the combination that generate the second highest margin.
+#### 4. For each bk_score group, send 20% (20% * 226,000 = 45,200) of remaining mailings to the combination that generate the third highest margin.
+
+
+## Report
+#### Part 1: Why does Customer Lifetime Value vary with BK score? Why does Customer Lifetime Value vary with product? (See Exhibit 2 to help answer these questions)
+#### Analysis: (1) An individual’s BK score was a measure of risk. That is, the higher the BK score, the more likely that person was to default on a financial obligation. CLV depends not only on the product offering, but also on the customer’s BK score: the higher the BK score, the lower the CLV of the customer, because customers who have higher BK score are less likely to pay back the money.
+#### (2) In addition, the higher the APR or annual fee, the higher the CLV, because customers are paying more. A product with variable interest rate also has a higher CLV than the same product with a fixed interest rate, because banks could pass along most of the interest-rate risk to the customer.
+
+
+#### Part 2: Are predictive models estimated on historical data useful in this case? If so, why? If not, why not?
+#### Analysis: Yes. After we submitted the test round (round 1) and got the results as our data for prediction, we combined our test round data with historical data (exhibit1) so that we have more information to work with. We took 6 combinations (product offerings) in exhibit1 that are not in the test-round data set and combined them with the test-round data set. Although there might be some seasonality effect, we think that it is more valuable to gain more information so that the predictive power of our model would be stronger. As a result, we used this merged data set to train our predictive model.
+
+
+#### Part 3: Is there a “best product” that will likely be preferred by all customers?
+#### Analysis: Yes. Intuitively, a best product would have the lowest APR (14.9%), 0 annual fee, and fixed interest rate. Customers would always prefer products that cost less when all other features are stable. According to our predicted result, this product (apr = 14.9%, annual_fee = 0, fixed_var = fixed) has the highest response rate for all 3 groups of customers (bk_score = 150, 200, and 250), which corresponds to our intuition.
+
+
+#### Part 4: Describe and justify your testing strategy.
+#### Analysis: Our testing strategy mainly consists of three steps.
+#### Step 1: (1) We used Design of Experiments with three levels of apr (14.9%, 16.8%, 19.8%), two levels of fixed_var(fixed, variable), two levels of annual_fee (0, 20), and three levels of bk_score (150, 200, 250), and we set seed of 1234. (2) We choose 18 trials for partial factorial design, because Balanced = TRUE for 18 trials, D-efficiency is the second high for 18 trials, which is 0.965 (the first high is 36 trials for full factorial), 0.965 is very close to 1, so we think that it is not worthwhile to spend $18,000 more for full factorial, we think that 18 trials of partial factorial are sufficiently representative of full factorial design. (3) We fill these 18 trials/combinations for our test round (round 1) with sample size as 4,000 for each cell. (4) Our profit of test round is $1,316.
+#### Step 2: (1) We use the test round data set, add combinations from exhibit1 which are not in the test round data set, and use the whole 96,000 data set (gather columns and table to data) to train the following models: [1] Logistic Regression - Explanatory variables: apr, fixed_var, annual_fee, bk_score. Response variable: response with level = "resp". Interactions: apr:annual_fee, annual_fee:bk_score, and apr:fixed_var. Reasons: Refer to plots in the coding part. apr has the small effect on the $20 annual fee but has the large effect on the no annual fee. Thus, there is an interaction between these two variables. annual_fee has the small effect on the 150 and 200 bk_scores but has the large effect on the 250 bk_score. Thus, there is an interaction between these two variables. From 16.8% to 19.8%, apr has the small effect on fixed_var, but from 14.9% to 16.8%, apr has the large effect on fixed_var. Thus, we still conclude that there is an interaction between these two variables. AUC: 0.7242464. [2] Neural Network - Explanatory variables: apr, fixed_var, annual_fee, bk_score. Response variable: response with level = "resp". Generate a baseline neural network model using default parameters. 5-fold cross validation: size = 1:5, decay = seq(0.1, 0.5, 0.1). Optimal hyper-parameters: decay = 0.5, size = 3. AUC: 7235992. [3] XGBoost - Explanatory variables: apr, fixed_var, annual_fee, bk_score. Response variable: response with level = "resp". Generate a baseline XGBoost model using default parameters. 5-fold cross validation: max_depth = 1:6, learning_rate = seq(0.1, 0.5, 0.1). Optimal hyper-parameters: max_depth = 4, learning_rate = 0.1. AUC: 0.7252920. Model selection - These three models have very similar AUCs. The AUC of XGBoost is only a little higher than Logistic Regression (about 0.001 = 0.1%), so it not better enough to choose XGBoost. Therefore, we choose Logistic Regression to do predictions for easier understanding and interpretation.
+#### Step 3: (1) Use Logistic Regression to predict on exhibit2. Change all explanatory variables to factor and make sure that the data in exhibit2 and the merged data set is consistent (e.g. All lower cases, percentage vs. number, etc.). (2) Expected clv for each of the 36 combinations = predicted probability * clv. (3) Rank the expected clv from the highest to lowest. Now we have the sorted expected profit for each BK score. (4) For each BK_score, the highest expected profit is a lot higher than the 2nd and 3rd, so we decided to distribute the mailing in the following way: 60% to the highest group, 20% to the 2nd group and 20% to the 3rd group. (5) Total Profit of test round and roll-out round: $516,029.
+
+
+
