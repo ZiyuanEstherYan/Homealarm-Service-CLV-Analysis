@@ -1,0 +1,1110 @@
+---
+title: "Intuit Quickbooks Upgrade: Redux"
+output: html_document
+---
+
+* Team-lead GitLab id: rsm-s8hua
+* Group name: UCSD Undergrad Alumni
+* Team member names: Shiyi Hua, Wan Qiu, Siwei Xie, Ziyuan Yan
+
+```{r r_setup, include = FALSE}
+## initial settings
+knitr::opts_chunk$set(
+  comment = NA,
+  echo = TRUE,
+  error = TRUE,
+  cache = FALSE,
+  message = FALSE,
+  dpi = 144,
+  warning = FALSE
+)
+
+## width to use when printing tables etc.
+options(
+  width = 250,
+  scipen = 100,
+  max.print = 5000,
+  stringsAsFactors = FALSE
+)
+
+## load radiant packages if needed
+if (!exists("r_environment")) library(radiant)
+```
+
+<style>
+.btn, .form-control, pre, code, pre code {
+  border-radius: 4px;
+}
+.table {
+  width: auto;
+}
+ul, ol {
+  padding-left: 18px;
+}
+code, pre, pre code {
+  overflow: auto;
+  white-space: pre;
+  word-wrap: normal;
+}
+code {
+  color: #c7254e;
+  background-color: #f9f2f4;
+}
+pre {
+  background-color: #ffffff;
+}
+</style>
+
+## Setup
+
+Please complete this Rmarkdown document with your group by answering the questions in `intuit-redux.pdf` on Canvas (week7/). Create an HTML file with all your results and comments and push both the Rmarkdown and HTML file to GitLab when your team is done. All results MUST be reproducible (i.e., the TA and I must be able to recreate the HTML from the Rmarkdown file without changes or errors). This means that you should NOT use any R-packages that are not part of the rsm-msba-spark docker container.
+
+This is the second group assignment for MGTA 455 and you will be using git and GitLab. If two people edit the same file at the same time you could get what is called a "merge conflict". git will not decide for you who's change to accept so the team-lead will have to determine which edits to use. To avoid merge conflicts, **always** click "pull" in Rstudio before you start working on any files. Then, when you are done, save and commit your changes, and then push them to GitLab. Make "pull-first" a habit!
+
+If multiple people are going to work on the assignment at the same time I recommend you work on different files. You can use `source` to include R-code in your Rmarkdown document or include other R(markdown) documents into the main assignment file. 
+
+Group work-flow tips as discussed during ICT in Summer II are shown below:
+
+* Pull, edit, save, stage, commit, and push
+* Schedule who does what and when
+* Try to avoid working simultaneously on the same file 
+* If you are going to work simultaneously, do it in different files, e.g., 
+    - assignment1_john.R, assignment1_susan.R, assignment1_wei.R 
+    - assignment_1a.R, assignment_1b.R, assignment_1c.R
+* Use the `source` command to bring different pieces of code together into an Rmarkdown document or into an R-code file
+* Alternatively, use _child_ in Rmarkdown to include a part of a report
+* For (very) big projects use 'branches' to avoid conflicts (and stay on your branch)
+
+A graphical depiction of the group work-flow is shown below:
+
+![](images/git-group-workflow.png)
+
+Tutorial videos about using Git, GitLab, and GitGadget for group assignments:
+
+* Setup the MSBA server to use Git and GitLab: https://youtu.be/oUrI7G3NHDg
+* Dealing with Merge Conflicts: https://youtu.be/elq5UUG0RbE
+* Group assignment practice: https://youtu.be/uwqUHl3z37o
+
+Additional resources on git are linked below:
+
+* http://happygitwithr.com
+* http://r-pkgs.had.co.nz/git.html
+* http://stackoverflow.com/questions/tagged/git or just a google search
+* https://try.github.io
+* https://www.manning.com/books/git-in-practice
+* https://github.com/GitInPractice/GitInPractice#readme
+
+
+```{r}
+## loading the data (do NOT change the data)
+intuit75k <- readr::read_rds("data/intuit75k.rds")
+```
+
+Below an example of how you could include another Rmd file inside your main assignment Rmarkdown document. Note:  don't add a YAML header to the _child_ file! 
+
+```{r, child = "R/question-1.Rmd"}
+
+```
+
+Alternatively you can source code from an .R file as follows:
+
+```{r}
+# source("R/question-1.R", local = TRUE)
+```
+
+```{r}
+## Load tidyverse package
+library(tidyverse)
+```
+
+## Question answers
+### Data Pre-processing
+```{r}
+## Change variable type
+intuit75k <- mutate_at(intuit75k, .vars = vars(zip_bins), .funs = as_factor)
+```
+
+```{r}
+## Create new variables
+intuit75k <- mutate(intuit75k, zip801 = zip == "00801")
+intuit75k <- mutate(intuit75k, zip804 = zip == "00804")
+```
+
+```{r}
+## Transform variable
+intuit75k <- mutate_ext(intuit75k, .vars = vars(dollars, sincepurch), .funs = log, .ext = "_ln")
+```
+
+```{r}
+## Calculate breakeven
+breakeven <- 1.41 / 60
+breakeven
+```
+
+```{r}
+## Filter training set and test set
+train <- intuit75k %>% filter(training == 1)
+test <- intuit75k %>% filter(training == 0)
+
+ensemble_test <- intuit75k %>% filter(training == 0)
+```
+
+
+### Neural Network
+```{r}
+## Baseline neural network model with randomly chosen parameters (decay, size)
+result <- nn(
+  intuit75k,
+  rvar = "res1",
+  evar = c(
+    "zip_bins", "sex", "bizflag", "numords", "dollars", "last",
+    "sincepurch", "version1", "owntaxprod", "upgraded", "zip801",
+    "zip804"
+  ),
+  lev = "Yes",
+  size = 3,
+  decay = 0.2,
+  seed = 1234,
+  data_filter = "training == 1"
+)
+```
+
+```{r}
+## Cross-validation for neural network to get the optimal size and decay in terms of maximizing profit
+#cv.nn(result, K = 5, size = 1:5, decay = seq(0.05, 0.5, 0.05), seed = 1234)
+```
+
+#### Top 1 AUC (0.7706073) with size = 2, decay = 0.45
+```{r}
+## Neural network model with optimal size = 2 and decay = 0.45
+result_nn <- nn(
+  intuit75k,
+  rvar = "res1",
+  evar = c(
+    "zip_bins", "sex", "bizflag", "numords", "dollars", "last",
+    "sincepurch", "version1", "owntaxprod", "upgraded", "zip801",
+    "zip804"
+  ),
+  lev = "Yes",
+  size = 2,
+  decay = 0.45,
+  seed = 1234,
+  data_filter = "training == 1"
+)
+
+## Get prediction
+test$nn_pred <- predict(result_nn, test)$Prediction
+
+## Calculate accuracy
+test <- test %>%
+  mutate(nn_target = nn_pred > breakeven, actual_target = res1 == "Yes")
+
+maxtrix_nn <- table(test$actual_target, test$nn_target)
+accuracy_nn <- (maxtrix_nn[1, 1] + maxtrix_nn[2, 2]) / sum(maxtrix_nn)
+accuracy_nn
+```
+
+```{r}
+## Calculate PPV (Positive Predictive Value = TP / (TP + FP))
+ppv_nn <- maxtrix_nn[2, 2] / (maxtrix_nn[2, 2] + maxtrix_nn[1, 2])
+ppv_nn
+```
+
+```{r}
+## Calculate projected profit of wave-2 on the test set
+test <- test %>%
+  mutate(nn_pred05 = nn_pred * 0.5) %>%
+  mutate(nn_target05 = nn_pred05 > breakeven)
+
+mailto_nn <- test %>%
+  filter(nn_target05 == TRUE)
+
+response_nn <- mailto_nn %>%
+  filter(res1 == "Yes")
+
+resp_rate_nn <- (nrow(response_nn) / nrow(mailto_nn)) * 0.5
+
+exp_prof_nn <- nrow(mailto_nn) * resp_rate_nn * 60 - nrow(mailto_nn) * 1.41
+exp_prof_nn
+```
+
+```{r}
+## Scale profit to the whole data
+customer_left <- 801821 - 38487
+
+true_rate <- sum(test$nn_target05) / nrow(test)
+
+mail_wave2 <- customer_left * true_rate
+
+tp_wave2 <- test %>%
+  filter(nn_target05 == TRUE) %>%
+  filter(res1 == "Yes")
+
+resp_rate_wave2 <- (nrow(tp_wave2) / sum(test$nn_target05)) * 0.5
+
+profit_scale_nn <- mail_wave2 * resp_rate_wave2 * 60 - mail_wave2 * 1.41
+profit_scale_nn
+```
+
+#### Top 2 AUC (0.7699576) with size = 2, decay = 0.3
+```{r}
+## Neural network model with optimal size = 2 and decay = 0.3
+result_nn <- nn(
+  intuit75k,
+  rvar = "res1",
+  evar = c(
+    "zip_bins", "sex", "bizflag", "numords", "dollars", "last",
+    "sincepurch", "version1", "owntaxprod", "upgraded", "zip801",
+    "zip804"
+  ),
+  lev = "Yes",
+  size = 2,
+  decay = 0.3,
+  seed = 1234,
+  data_filter = "training == 1"
+)
+
+## Get prediction
+test$nn_pred <- predict(result_nn, test)$Prediction
+
+## Calculate accuracy
+test <- test %>%
+  mutate(nn_target = nn_pred > breakeven, actual_target = res1 == "Yes")
+
+maxtrix_nn <- table(test$actual_target, test$nn_target)
+accuracy_nn <- (maxtrix_nn[1, 1] + maxtrix_nn[2, 2]) / sum(maxtrix_nn)
+accuracy_nn
+```
+
+```{r}
+## Calculate PPV (Positive Predictive Value = TP / (TP + FP))
+ppv_nn <- maxtrix_nn[2, 2] / (maxtrix_nn[2, 2] + maxtrix_nn[1, 2])
+ppv_nn
+```
+
+```{r}
+## Calculate projected profit of wave-2 on the test set
+test <- test %>%
+  mutate(nn_pred05 = nn_pred * 0.5) %>%
+  mutate(nn_target05 = nn_pred05 > breakeven)
+
+mailto_nn <- test %>%
+  filter(nn_target05 == TRUE)
+
+response_nn <- mailto_nn %>%
+  filter(res1 == "Yes")
+
+resp_rate_nn <- (nrow(response_nn) / nrow(mailto_nn)) * 0.5
+
+exp_prof_nn <- nrow(mailto_nn) * resp_rate_nn * 60 - nrow(mailto_nn) * 1.41
+exp_prof_nn
+```
+
+```{r}
+## Scale profit to the whole data
+customer_left <- 801821 - 38487
+
+true_rate <- sum(test$nn_target05) / nrow(test)
+
+mail_wave2 <- customer_left * true_rate
+
+tp_wave2 <- test %>%
+  filter(nn_target05 == TRUE) %>%
+  filter(res1 == "Yes")
+
+resp_rate_wave2 <- (nrow(tp_wave2) / sum(test$nn_target05)) * 0.5
+
+profit_scale_nn <- mail_wave2 * resp_rate_wave2 * 60 - mail_wave2 * 1.41
+profit_scale_nn
+```
+
+#### Top 3 AUC (0.7693642) with size = 2, decay = 0.35
+```{r}
+## Neural network model with optimal size = 2 and decay = 0.35
+result_nn <- nn(
+  intuit75k,
+  rvar = "res1",
+  evar = c(
+    "zip_bins", "sex", "bizflag", "numords", "dollars", "last",
+    "sincepurch", "version1", "owntaxprod", "upgraded", "zip801",
+    "zip804"
+  ),
+  lev = "Yes",
+  size = 2,
+  decay = 0.35,
+  seed = 1234,
+  data_filter = "training == 1"
+)
+
+## Get prediction
+test$nn_pred <- predict(result_nn, test)$Prediction
+
+## Calculate accuracy
+test <- test %>%
+  mutate(nn_target = nn_pred > breakeven, actual_target = res1 == "Yes")
+
+maxtrix_nn <- table(test$actual_target, test$nn_target)
+accuracy_nn <- (maxtrix_nn[1, 1] + maxtrix_nn[2, 2]) / sum(maxtrix_nn)
+accuracy_nn
+```
+
+```{r}
+## Calculate PPV (Positive Predictive Value = TP / (TP + FP))
+ppv_nn <- maxtrix_nn[2, 2] / (maxtrix_nn[2, 2] + maxtrix_nn[1, 2])
+ppv_nn
+```
+
+```{r}
+## Calculate projected profit of wave-2 on the test set
+test <- test %>%
+  mutate(nn_pred05 = nn_pred * 0.5) %>%
+  mutate(nn_target05 = nn_pred05 > breakeven)
+
+mailto_nn <- test %>%
+  filter(nn_target05 == TRUE)
+
+response_nn <- mailto_nn %>%
+  filter(res1 == "Yes")
+
+resp_rate_nn <- (nrow(response_nn) / nrow(mailto_nn)) * 0.5
+
+exp_prof_nn <- nrow(mailto_nn) * resp_rate_nn * 60 - nrow(mailto_nn) * 1.41
+exp_prof_nn
+```
+
+```{r}
+## Scale profit to the whole data
+customer_left <- 801821 - 38487
+
+true_rate <- sum(test$nn_target05) / nrow(test)
+
+mail_wave2 <- customer_left * true_rate
+
+tp_wave2 <- test %>%
+  filter(nn_target05 == TRUE) %>%
+  filter(res1 == "Yes")
+
+resp_rate_wave2 <- (nrow(tp_wave2) / sum(test$nn_target05)) * 0.5
+
+profit_scale_nn <- mail_wave2 * resp_rate_wave2 * 60 - mail_wave2 * 1.41
+profit_scale_nn
+```
+
+#### Compare top 3 AUC neural network models in terms of profit
+```{r}
+profit_tibble_nn <- tibble::tibble(
+  name = c("Top 1 AUC NN (size = 2, decay = 0.45)", "Top 2 AUC NN (size = 2, decay = 0.3)", "Top 3 AUC NN (size = 2, decay = 0.35)"),
+  TestProfit = c(12898.41, 12992.55, 13149.75),
+  ScaleProfit = c(437590.9, 440784.7, 446117.8)
+) %>%
+  mutate(name = factor(name, levels = name))
+arrange(profit_tibble_nn, desc(TestProfit))
+```
+##### Thus, we use optimal size = 2, decay = 0.35 for neural network.
+
+
+### Random Forest
+```{r}
+## Baseline random forest model with default parameters
+result_rf_base <- rforest(
+  intuit75k,
+  rvar = "res1",
+  evar = c(
+    "numords", "last", "version1",
+    "owntaxprod", "upgraded", "dollars_ln", "zip801",
+    "zip804"
+  ),
+  lev = "Yes",
+  seed = 1234,
+  data_filter = "training == 1"
+)
+```
+
+```{r}
+## Cross-validation for random forest to get the optimal parameters in terms of maximizing profit
+##cv.rforest(result_rf_base, K = 5, repeats = 1, mtry = 1:4, num.trees = seq(90, 200, 1), min.node.size = 1, sample.fraction = 1, trace = TRUE, seed = 1234)
+```
+
+#### Top 1 AUC (0.7714896) with mtry = 2, num.trees = 169
+```{r}
+## Random forest model with optimal mtry = 2, num.trees = 169
+result_rf <- rforest(
+  intuit75k,
+  rvar = "res1",
+  evar = c(
+    "numords", "last", "version1",
+    "owntaxprod", "upgraded", "dollars_ln", "zip801",
+    "zip804"
+  ),
+  lev = "Yes",
+  mtry = 2,
+  num.trees = 169,
+  min.node.size = 1,
+  sample.fraction = 1,
+  seed = 1234,
+  data_filter = "training == 1"
+)
+
+## Get prediction
+pred_rf <- predict(result_rf, pred_data = test, OOB = FALSE)
+test <- store(test, pred_rf, name = "rf_pred")
+
+## Calculate accuracy
+test <- test %>%
+  mutate(rf_target = rf_pred > breakeven, actual_target = res1 == "Yes")
+
+maxtrix_rf <- table(test$actual_target, test$rf_target)
+accuracy_rf <- (maxtrix_rf[1, 1] + maxtrix_rf[2, 2]) / sum(maxtrix_rf)
+accuracy_rf
+```
+
+```{r}
+## Calculate PPV (Positive Predictive Value = TP / (TP + FP))
+ppv_rf <- maxtrix_rf[2, 2] / (maxtrix_rf[2, 2] + maxtrix_rf[1, 2])
+ppv_rf
+```
+
+```{r}
+## Calculate projected profit of wave-2 on the test set
+test <- test %>%
+  mutate(rf_pred05 = rf_pred * 0.5) %>%
+  mutate(rf_target05 = rf_pred05 > breakeven)
+
+mailto_rf <- test %>%
+  filter(rf_target05 == TRUE)
+
+response_rf <- mailto_rf %>%
+  filter(res1 == "Yes")
+
+resp_rate_rf <- (nrow(response_rf) / nrow(mailto_rf)) * 0.5
+
+exp_prof_rf <- nrow(mailto_rf) * resp_rate_rf * 60 - nrow(mailto_rf) * 1.41
+exp_prof_rf
+```
+
+```{r}
+## Scale profit to the whole data
+customer_left <- 801821 - 38487
+
+true_rate <- sum(test$rf_target05) / nrow(test)
+
+mail_wave2 <- customer_left * true_rate
+
+tp_wave2 <- test %>%
+  filter(rf_target05 == TRUE) %>%
+  filter(res1 == "Yes")
+
+resp_rate_wave2 <- (nrow(tp_wave2) / sum(test$rf_target05)) * 0.5
+
+profit_scale_rf <- mail_wave2 * resp_rate_wave2 * 60 - mail_wave2 * 1.41
+profit_scale_rf
+```
+
+#### Top 2 AUC (0.7711709) with mtry = 1, num.trees = 180
+```{r}
+## Random forest model with optimal mtry = 1, num.trees = 180
+result_rf <- rforest(
+  intuit75k,
+  rvar = "res1",
+  evar = c(
+    "numords", "last", "version1",
+    "owntaxprod", "upgraded", "dollars_ln", "zip801",
+    "zip804"
+  ),
+  lev = "Yes",
+  mtry = 1,
+  num.trees = 180,
+  min.node.size = 1,
+  sample.fraction = 1,
+  seed = 1234,
+  data_filter = "training == 1"
+)
+
+## Get prediction
+pred_rf <- predict(result_rf, pred_data = test, OOB = FALSE)
+test <- store(test, pred_rf, name = "rf_pred")
+
+## Calculate accuracy
+test <- test %>%
+  mutate(rf_target = rf_pred > breakeven, actual_target = res1 == "Yes")
+
+maxtrix_rf <- table(test$actual_target, test$rf_target)
+accuracy_rf <- (maxtrix_rf[2, 1]) / sum(maxtrix_rf)
+accuracy_rf
+```
+
+```{r}
+## Calculate PPV (Positive Predictive Value = TP / (TP + FP))
+ppv_rf <- maxtrix_rf[2, 1] / (maxtrix_rf[2, 1] + maxtrix_rf[1, 1])
+ppv_rf
+```
+
+```{r}
+## Calculate projected profit of wave-2 on the test set
+test <- test %>%
+  mutate(rf_pred05 = rf_pred * 0.5) %>%
+  mutate(rf_target05 = rf_pred05 > breakeven)
+
+mailto_rf <- test %>%
+  filter(rf_target05 == TRUE)
+
+response_rf <- mailto_rf %>%
+  filter(res1 == "Yes")
+
+resp_rate_rf <- (nrow(response_rf) / nrow(mailto_rf)) * 0.5
+
+exp_prof_rf <- nrow(mailto_rf) * resp_rate_rf * 60 - nrow(mailto_rf) * 1.41
+exp_prof_rf
+```
+
+```{r}
+## Scale profit to the whole data
+customer_left <- 801821 - 38487
+
+true_rate <- sum(test$rf_target05) / nrow(test)
+
+mail_wave2 <- customer_left * true_rate
+
+tp_wave2 <- test %>%
+  filter(rf_target05 == TRUE) %>%
+  filter(res1 == "Yes")
+
+resp_rate_wave2 <- (nrow(tp_wave2) / sum(test$rf_target05)) * 0.5
+
+profit_scale_rf <- mail_wave2 * resp_rate_wave2 * 60 - mail_wave2 * 1.41
+profit_scale_rf
+```
+
+#### Top 3 AUC (0.7711524) with mtry = 2, num.trees = 140
+```{r}
+## Random forest model with optimal mtry = 1, num.trees = 180
+result_rf <- rforest(
+  intuit75k,
+  rvar = "res1",
+  evar = c(
+    "numords", "last", "version1",
+    "owntaxprod", "upgraded", "dollars_ln", "zip801",
+    "zip804"
+  ),
+  lev = "Yes",
+  mtry = 2,
+  num.trees = 140,
+  min.node.size = 1,
+  sample.fraction = 1,
+  seed = 1234,
+  data_filter = "training == 1"
+)
+
+## Get prediction
+pred_rf <- predict(result_rf, pred_data = test, OOB = FALSE)
+test <- store(test, pred_rf, name = "rf_pred")
+
+## Calculate accuracy
+test <- test %>%
+  mutate(rf_target = rf_pred > breakeven, actual_target = res1 == "Yes")
+
+maxtrix_rf <- table(test$actual_target, test$rf_target)
+accuracy_rf <- (maxtrix_rf[1, 1] + maxtrix_rf[2, 2]) / sum(maxtrix_rf)
+accuracy_rf
+```
+
+```{r}
+## Calculate PPV (Positive Predictive Value = TP / (TP + FP))
+ppv_rf <- maxtrix_rf[2, 2] / (maxtrix_rf[2, 2] + maxtrix_rf[1, 2])
+ppv_rf
+```
+
+```{r}
+## Calculate projected profit of wave-2 on the test set
+test <- test %>%
+  mutate(rf_pred05 = rf_pred * 0.5) %>%
+  mutate(rf_target05 = rf_pred05 > breakeven)
+
+mailto_rf <- test %>%
+  filter(rf_target05 == TRUE)
+
+response_rf <- mailto_rf %>%
+  filter(res1 == "Yes")
+
+resp_rate_rf <- (nrow(response_rf) / nrow(mailto_rf)) * 0.5
+
+exp_prof_rf <- nrow(mailto_rf) * resp_rate_rf * 60 - nrow(mailto_rf) * 1.41
+exp_prof_rf
+```
+
+```{r}
+## Scale profit to the whole data
+customer_left <- 801821 - 38487
+
+true_rate <- sum(test$rf_target05) / nrow(test)
+
+mail_wave2 <- customer_left * true_rate
+
+tp_wave2 <- test %>%
+  filter(rf_target05 == TRUE) %>%
+  filter(res1 == "Yes")
+
+resp_rate_wave2 <- (nrow(tp_wave2) / sum(test$rf_target05)) * 0.5
+
+profit_scale_rf <- mail_wave2 * resp_rate_wave2 * 60 - mail_wave2 * 1.41
+profit_scale_rf
+```
+
+#### Compare top 3 AUC random forest models in terms of profit
+```{r}
+profit_tibble_rf <- tibble::tibble(
+  name = c("Top 1 AUC RF (mtry = 2, num.trees = 169)", "Top 2 AUC RF (mtry = 1, num.trees = 180)", "Top 3 AUC RF (mtry = 2, num.trees = 140)"),
+  TestProfit = c(13184.43, 13331.76, 13175.73),
+  ScaleProfit = c(447294.4, 452292.7, 446999.2)
+) %>%
+  mutate(name = factor(name, levels = name))
+arrange(profit_tibble_rf, desc(TestProfit))
+```
+##### Thus, we use optimal mtry = 1, num.trees = 180 for random forest.
+
+
+### XGBoost
+```{r}
+## Baseline XGBoost model with default parameters
+result_xgb_base <- gbt(
+  intuit75k,
+  rvar = "res1",
+  evar = c(
+    "numords", "last", "version1",
+    "owntaxprod", "upgraded", "dollars_ln", "zip801",
+    "zip804"
+  ),
+  lev = "Yes",
+  seed = 1234,
+  data_filter = "training == 1"
+)
+```
+
+```{r}
+## Cross-validation for XGBoost to get the optimal parameters in terms of maximizing profit
+params <- list(max_depth = 1:6)
+
+##cv.gbt(result_xgb_base, params = params, maximize = TRUE, trace = TRUE, seed = 1234)
+```
+
+#### Top 1 AUC (0.7715756) with max_depth = 2
+```{r}
+## XGBoost model with optimal max_depth = 2
+result_xgb <- gbt(
+  intuit75k,
+  rvar = "res1",
+  evar = c(
+    "numords", "last", "version1",
+    "owntaxprod", "upgraded", "dollars_ln", "zip801",
+    "zip804"
+  ),
+  lev = "Yes",
+  max_depth = 2,
+  seed = 1234,
+  data_filter = "training == 1"
+)
+
+## Get prediction
+pred_rf <- predict(result_xgb, pred_data = test)
+test <- store(test, pred_rf, name = "xgb_pred")
+
+## Calculate accuracy
+test <- test %>%
+  mutate(xgb_target = xgb_pred > breakeven, actual_target = res1 == "Yes")
+
+maxtrix_xgb <- table(test$actual_target, test$xgb_target)
+accuracy_xgb <- (maxtrix_xgb[1, 1] + maxtrix_xgb[2, 2]) / sum(maxtrix_xgb)
+accuracy_xgb
+```
+
+```{r}
+## Calculate PPV (Positive Predictive Value = TP / (TP + FP))
+ppv_xgb <- maxtrix_xgb[2, 2] / (maxtrix_xgb[2, 2] + maxtrix_xgb[1, 2])
+ppv_xgb
+```
+
+```{r}
+## Calculate projected profit of wave-2 on the test set
+test <- test %>%
+  mutate(xgb_pred05 = xgb_pred * 0.5) %>%
+  mutate(xgb_target05 = xgb_pred05 > breakeven)
+
+mailto_xgb <- test %>%
+  filter(xgb_target05 == TRUE)
+
+response_xgb <- mailto_xgb %>%
+  filter(res1 == "Yes")
+
+resp_rate_xgb <- (nrow(response_xgb) / nrow(mailto_xgb)) * 0.5
+
+exp_prof_xgb <- nrow(mailto_xgb) * resp_rate_xgb * 60 - nrow(mailto_xgb) * 1.41
+exp_prof_xgb
+```
+
+```{r}
+## Scale profit to the whole data
+customer_left <- 801821 - 38487
+
+true_rate <- sum(test$xgb_target05) / nrow(test)
+
+mail_wave2 <- customer_left * true_rate
+
+tp_wave2 <- test %>%
+  filter(xgb_target05 == TRUE) %>%
+  filter(res1 == "Yes")
+
+resp_rate_wave2 <- (nrow(tp_wave2) / sum(test$xgb_target05)) * 0.5
+
+profit_scale_xgb <- mail_wave2 * resp_rate_wave2 * 60 - mail_wave2 * 1.41
+profit_scale_xgb
+```
+
+#### Top 2 AUC (0.7714722) with max_depth = 3
+```{r}
+## XGBoost model with optimal max_depth = 3
+result_xgb <- gbt(
+  intuit75k,
+  rvar = "res1",
+  evar = c(
+    "numords", "last", "version1",
+    "owntaxprod", "upgraded", "dollars_ln", "zip801",
+    "zip804"
+  ),
+  lev = "Yes",
+  max_depth = 3,
+  seed = 1234,
+  data_filter = "training == 1"
+)
+
+## Get prediction
+pred_rf <- predict(result_xgb, pred_data = test)
+test <- store(test, pred_rf, name = "xgb_pred")
+
+## Calculate accuracy
+test <- test %>%
+  mutate(xgb_target = xgb_pred > breakeven, actual_target = res1 == "Yes")
+
+maxtrix_xgb <- table(test$actual_target, test$xgb_target)
+accuracy_xgb <- (maxtrix_xgb[1, 1] + maxtrix_xgb[2, 2]) / sum(maxtrix_xgb)
+accuracy_xgb
+```
+
+```{r}
+## Calculate PPV (Positive Predictive Value = TP / (TP + FP))
+ppv_xgb <- maxtrix_xgb[2, 2] / (maxtrix_xgb[2, 2] + maxtrix_xgb[1, 2])
+ppv_xgb
+```
+
+```{r}
+## Calculate projected profit of wave-2 on the test set
+test <- test %>%
+  mutate(xgb_pred05 = xgb_pred * 0.5) %>%
+  mutate(xgb_target05 = xgb_pred05 > breakeven)
+
+mailto_xgb <- test %>%
+  filter(xgb_target05 == TRUE)
+
+response_xgb <- mailto_xgb %>%
+  filter(res1 == "Yes")
+
+resp_rate_xgb <- (nrow(response_xgb) / nrow(mailto_xgb)) * 0.5
+
+exp_prof_xgb <- nrow(mailto_xgb) * resp_rate_xgb * 60 - nrow(mailto_xgb) * 1.41
+exp_prof_xgb
+```
+
+```{r}
+## Scale profit to the whole data
+customer_left <- 801821 - 38487
+
+true_rate <- sum(test$xgb_target05) / nrow(test)
+
+mail_wave2 <- customer_left * true_rate
+
+tp_wave2 <- test %>%
+  filter(xgb_target05 == TRUE) %>%
+  filter(res1 == "Yes")
+
+resp_rate_wave2 <- (nrow(tp_wave2) / sum(test$xgb_target05)) * 0.5
+
+profit_scale_xgb <- mail_wave2 * resp_rate_wave2 * 60 - mail_wave2 * 1.41
+profit_scale_xgb
+```
+
+#### Top 3 AUC (0.7711690) with max_depth = 4
+```{r}
+## XGBoost model with optimal max_depth = 4
+result_xgb <- gbt(
+  intuit75k,
+  rvar = "res1",
+  evar = c(
+    "numords", "last", "version1",
+    "owntaxprod", "upgraded", "dollars_ln", "zip801",
+    "zip804"
+  ),
+  lev = "Yes",
+  max_depth = 4,
+  seed = 1234,
+  data_filter = "training == 1"
+)
+
+## Get prediction
+pred_rf <- predict(result_xgb, pred_data = test)
+test <- store(test, pred_rf, name = "xgb_pred")
+
+## Calculate accuracy
+test <- test %>%
+  mutate(xgb_target = xgb_pred > breakeven, actual_target = res1 == "Yes")
+
+maxtrix_xgb <- table(test$actual_target, test$xgb_target)
+accuracy_xgb <- (maxtrix_xgb[1, 1] + maxtrix_xgb[2, 2]) / sum(maxtrix_xgb)
+accuracy_xgb
+```
+
+```{r}
+## Calculate PPV (Positive Predictive Value = TP / (TP + FP))
+ppv_xgb <- maxtrix_xgb[2, 2] / (maxtrix_xgb[2, 2] + maxtrix_xgb[1, 2])
+ppv_xgb
+```
+
+```{r}
+## Calculate projected profit of wave-2 on the test set
+test <- test %>%
+  mutate(xgb_pred05 = xgb_pred * 0.5) %>%
+  mutate(xgb_target05 = xgb_pred05 > breakeven)
+
+mailto_xgb <- test %>%
+  filter(xgb_target05 == TRUE)
+
+response_xgb <- mailto_xgb %>%
+  filter(res1 == "Yes")
+
+resp_rate_xgb <- (nrow(response_xgb) / nrow(mailto_xgb)) * 0.5
+
+exp_prof_xgb <- nrow(mailto_xgb) * resp_rate_xgb * 60 - nrow(mailto_xgb) * 1.41
+exp_prof_xgb
+```
+
+```{r}
+## Scale profit to the whole data
+customer_left <- 801821 - 38487
+
+true_rate <- sum(test$xgb_target05) / nrow(test)
+
+mail_wave2 <- customer_left * true_rate
+
+tp_wave2 <- test %>%
+  filter(xgb_target05 == TRUE) %>%
+  filter(res1 == "Yes")
+
+resp_rate_wave2 <- (nrow(tp_wave2) / sum(test$xgb_target05)) * 0.5
+
+profit_scale_xgb <- mail_wave2 * resp_rate_wave2 * 60 - mail_wave2 * 1.41
+profit_scale_xgb
+```
+
+#### Compare top 3 AUC XGBoost models in terms of profit
+```{r}
+profit_tibble_XGB <- tibble::tibble(
+  name = c("Top 1 AUC XGB (max_depth = 2)", "Top 2 AUC XGB (max_depth = 3)", "Top 3 AUC XGB (max_depth = 4)"),
+  TestProfit = c(13390.32, 12730.56, 12331.41),
+  ScaleProfit = c(454279.4, 431896.4, 418354.9)
+) %>%
+  mutate(name = factor(name, levels = name))
+arrange(profit_tibble_XGB, desc(TestProfit))
+```
+##### Thus, we use optimal max_depth = 2 for XGBoost.
+
+
+### Ensemble
+```{r}
+## Neural network model with optimal size = 2 and decay = 0.35
+result_nn <- nn(
+  intuit75k,
+  rvar = "res1",
+  evar = c(
+    "zip_bins", "sex", "bizflag", "numords", "dollars", "last",
+    "sincepurch", "version1", "owntaxprod", "upgraded", "zip801",
+    "zip804"
+  ),
+  lev = "Yes",
+  size = 2,
+  decay = 0.35,
+  seed = 1234,
+  data_filter = "training == 1"
+)
+
+## Get prediction
+ensemble_test$nn_pred <- predict(result_nn, ensemble_test)$Prediction
+
+## Random forest model with optimal mtry = 1, num.trees = 180
+result_rf <- rforest(
+  intuit75k,
+  rvar = "res1",
+  evar = c(
+    "numords", "last", "version1",
+    "owntaxprod", "upgraded", "dollars_ln", "zip801",
+    "zip804"
+  ),
+  lev = "Yes",
+  mtry = 1,
+  num.trees = 180,
+  min.node.size = 1,
+  sample.fraction = 1,
+  seed = 1234,
+  data_filter = "training == 1"
+)
+
+## Get prediction
+pred_rf <- predict(result_rf, pred_data = ensemble_test, OOB = FALSE)
+ensemble_test <- store(ensemble_test, pred_rf, name = "rf_pred")
+
+## XGBoost model with optimal max_depth = 2
+result_xgb <- gbt(
+  intuit75k,
+  rvar = "res1",
+  evar = c(
+    "numords", "last", "version1",
+    "owntaxprod", "upgraded", "dollars_ln", "zip801",
+    "zip804"
+  ),
+  lev = "Yes",
+  max_depth = 2,
+  seed = 1234,
+  data_filter = "training == 1"
+)
+
+## Get prediction
+pred_xgb <- predict(result_xgb, pred_data = ensemble_test)
+ensemble_test <- store(ensemble_test, pred_xgb, name = "xgb_pred")
+
+## 4 ensemble groups
+ensemble_test <- ensemble_test %>%
+  mutate(nnrfxgb_pred = (nn_pred + rf_pred + xgb_pred) / 3, nnrf_pred = (nn_pred + rf_pred) / 2, nnxgb_pred = (nn_pred + xgb_pred) / 2, rfxgb_pred = (rf_pred + xgb_pred) / 2) %>%
+  mutate(nnrfxgb_pred05 = nnrfxgb_pred * 0.5, nnrf_pred05 = nnrf_pred * 0.5, nnxgb_pred05 = nnxgb_pred * 0.5, rfxgb_pred05 = rfxgb_pred * 0.5) %>%
+  mutate(nnrfxgb_target05 = nnrfxgb_pred05 > breakeven, nnrf_target05 = nnrf_pred05 > breakeven, nnxgb_target05 = nnxgb_pred05 > breakeven, rfxgb_target05 = rfxgb_pred05 > breakeven)
+```
+
+```{r}
+## nn & rf & xgb ensemble: projected profit of wave-2 on the test set
+mailto_nnrfxgb <- ensemble_test %>%
+  filter(nnrfxgb_target05 == TRUE)
+
+response_nnrfxgb <- mailto_nnrfxgb %>%
+  filter(res1 == "Yes")
+
+resp_rate_nnrfxgb <- (nrow(response_nnrfxgb) / nrow(mailto_nnrfxgb)) * 0.5
+
+exp_prof_nnrfxgb <- nrow(mailto_nnrfxgb) * resp_rate_nnrfxgb * 60 - nrow(mailto_nnrfxgb) * 1.41
+
+## nn & rf & xgb ensemble: scale profit to the whole data
+customer_left <- 801821 - 38487
+
+true_rate <- sum(ensemble_test$nnrfxgb_target05) / nrow(ensemble_test)
+
+mail_wave2 <- customer_left * true_rate
+
+profit_scale_nnrfxgb <- mail_wave2 * resp_rate_nnrfxgb * 60 - mail_wave2 * 1.41
+
+print(c(exp_prof_nnrfxgb, profit_scale_nnrfxgb))
+```
+
+```{r}
+## nn & rf ensemble: projected profit of wave-2 on the test set
+mailto_nnrf <- ensemble_test %>%
+  filter(nnrf_target05 == TRUE)
+
+response_nnrf <- mailto_nnrf %>%
+  filter(res1 == "Yes")
+
+resp_rate_nnrf <- (nrow(response_nnrf) / nrow(mailto_nnrf)) * 0.5
+
+exp_prof_nnrf <- nrow(mailto_nnrf) * resp_rate_nnrf * 60 - nrow(mailto_nnrf) * 1.41
+
+## nn & rf ensemble: scale profit to the whole data
+customer_left <- 801821 - 38487
+
+true_rate <- sum(ensemble_test$nnrf_target05) / nrow(ensemble_test)
+
+mail_wave2 <- customer_left * true_rate
+
+profit_scale_nnrf <- mail_wave2 * resp_rate_nnrf * 60 - mail_wave2 * 1.41
+
+print(c(exp_prof_nnrf, profit_scale_nnrf))
+```
+
+```{r}
+## nn & xgb ensemble: projected profit of wave-2 on the test set
+mailto_nnxgb <- ensemble_test %>%
+  filter(nnxgb_target05 == TRUE)
+
+response_nnxgb <- mailto_nnxgb %>%
+  filter(res1 == "Yes")
+
+resp_rate_nnxgb <- (nrow(response_nnxgb) / nrow(mailto_nnxgb)) * 0.5
+
+exp_prof_nnxgb <- nrow(mailto_nnxgb) * resp_rate_nnxgb * 60 - nrow(mailto_nnxgb) * 1.41
+
+## nn & rf & xgb ensemble: scale profit to the whole data
+customer_left <- 801821 - 38487
+
+true_rate <- sum(ensemble_test$nnxgb_target05) / nrow(ensemble_test)
+
+mail_wave2 <- customer_left * true_rate
+
+profit_scale_nnxgb <- mail_wave2 * resp_rate_nnxgb * 60 - mail_wave2 * 1.41
+
+print(c(exp_prof_nnxgb, profit_scale_nnxgb))
+```
+
+```{r}
+## rf & xgb ensemble: projected profit of wave-2 on the test set
+mailto_rfxgb <- ensemble_test %>%
+  filter(rfxgb_target05 == TRUE)
+
+response_rfxgb <- mailto_rfxgb %>%
+  filter(res1 == "Yes")
+
+resp_rate_rfxgb <- (nrow(response_rfxgb) / nrow(mailto_rfxgb)) * 0.5
+
+exp_prof_rfxgb <- nrow(mailto_rfxgb) * resp_rate_rfxgb * 60 - nrow(mailto_rfxgb) * 1.41
+
+## rf & xgb ensemble: scale profit to the whole data
+customer_left <- 801821 - 38487
+
+true_rate <- sum(ensemble_test$rfxgb_target05) / nrow(ensemble_test)
+
+mail_wave2 <- customer_left * true_rate
+
+profit_scale_rfxgb <- mail_wave2 * resp_rate_rfxgb * 60 - mail_wave2 * 1.41
+
+print(c(exp_prof_rfxgb, profit_scale_rfxgb))
+```
+
+
+### Model Comparison by Projected Profit on the Test Set (and Scaled Profit on the whole dataset)
+```{r}
+profit_tibble <- tibble::tibble(
+  name = c("Neural Network", "Random Forest", "XGBoost", "Ensemble: NN & RF & XGB", "Ensemble: NN & RF", "Ensemble: NN & XGB", "Ensemble: RF & XGB"),
+  TestProfit = c(13149.75, 13331.76, 13390.32, 13524.15, 13556.64, 13398.99, 13352.46),
+  ScaleProfit = c(446117.8, 452292.7, 454279.4, 458819.71, 459921.97, 454573.54, 452994.96)
+) %>%
+  mutate(name = factor(name, levels = name))
+arrange(profit_tibble, desc(TestProfit))
+```
+
+
+### Create the csv file
+```{r}
+## Choose ensemble of neural network and random forest as our ultimate model
+list_test <- ensemble_test %>%
+  mutate(ultimate_target = (nnrf_target05 == TRUE & res1 == "No"))
+
+ultimate_list <- tibble::tibble(
+  id = list_test$id,
+  mailto_wave2 = list_test$ultimate_target
+)
+
+write.csv(ultimate_list, "Siwei_Wan_Ziyuan_Shiyi_UCSDUndergradAlumni.csv", row.names = FALSE)
+```
+
