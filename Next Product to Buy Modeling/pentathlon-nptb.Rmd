@@ -1,0 +1,698 @@
+---
+title: "Pentathlon III: Next Product to Buy Modeling"
+output: html_document
+---
+
+* Team-lead gitlab id: rsm-s8hua
+* Team-lead gitlab username: Shiyi Hua
+* Group number: We don't know
+* Group name: UCSD Undergrad Alumni
+* Team member names: Shiyi Hua, Wan Qiu, Siwei Xie, Ziyuan Yan
+
+```{r r_setup, include = FALSE}
+## initial settings
+knitr::opts_chunk$set(
+  comment = NA,
+  echo = TRUE,
+  error = TRUE,
+  cache = FALSE,
+  message = FALSE,
+  dpi = 96,
+  warning = FALSE
+)
+
+## width to use when printing tables etc.
+options(
+  width = 250,
+  scipen = 100,
+  max.print = 5000,
+  stringsAsFactors = FALSE
+)
+
+## load radiant packages if neededi
+if (!exists("r_environment")) library(radiant)
+```
+
+<style>
+.btn, .form-control, pre, code, pre code {
+  border-radius: 4px;
+}
+.table {
+  width: auto;
+}
+ul, ol {
+  padding-left: 18px;
+}
+code, pre, pre code {
+  overflow: auto;
+  white-space: pre;
+  word-wrap: normal;
+}
+code {
+  color: #c7254e;
+  background-color: #f9f2f4;
+}
+pre {
+  background-color: #ffffff;
+}
+</style>
+
+## Setup
+
+Please complete this Rmarkdown document by answering the questions in `pentathlon-nptb.pdf` on Canvas (week8/). Create an Rmarkdown file with all your results and comments and push both the Rmarkdown and HTML file to GitLab when your team is done. All results MUST be reproducible (i.e., the TA and I must be able to recreate the HTML from the Jupyter Notebook file without changes or errors). This means that you should NOT use any python-packages that are not part of the rsm-msba-spark docker container.
+
+This is the third group assignment for MGTA 455 and you will be using git and GitLab. If two people edit the same file at the same time you could get what is called a "merge conflict". git will not decide for you who's change to accept so the team-lead will have to determine which edits to use. To avoid merge conflicts, always "pull" changes to the repo before you start working on any files. Then, when you are done, save and commit your changes, and then push them to GitLab. Make "pull first" a habit!
+
+```{r}
+## loading the data - this dataset must NOT be changed
+pentathlon_nptb <- readr::read_rds("data/pentathlon_nptb.rds")
+# pentathlon_nptb <- readr::read_rds("data/pentathlon_nptb_5M.rds")
+```
+
+## Question answers
+
+
+### Pre-processing
+```{r}
+## Library tidyverse package
+library(tidyverse)
+```
+
+
+```{r}
+## To make the resulting prediction have the correct magnitude for the representative sample
+pentathlon_nptb <- pentathlon_nptb %>%
+  mutate(cweight = ifelse(buyer == "yes", 1L, 99L))
+```
+
+
+```{r}
+## Split dataset into training set, test set, and representative set
+train <- pentathlon_nptb %>%
+  filter(training == 1)
+
+test <- pentathlon_nptb %>%
+  filter(training == 0)
+
+representative <- pentathlon_nptb %>%
+  filter(representative == 1)
+```
+
+
+### Model Comparison and Selection
+#### Predict Probability of Purchase (Classification) - Model 1: Logistic Regression
+```{r}
+## Run logistic regression with 13 variables, with message interacting with each of other 12 variables, and with weights
+result_logit <- logistic(
+  pentathlon_nptb, 
+  rvar = "buyer", 
+  evar = c(
+    "message", "age", "gender", "income", "education", "children", 
+    "freq_endurance", "freq_strength", "freq_water", "freq_team", 
+    "freq_backcountry", "freq_winter", "freq_racquet"
+  ), 
+  lev = "yes", 
+  int = c(
+    "message:age", "message:gender", 
+    "message:income", "message:education", 
+    "message:children", "message:freq_endurance", 
+    "message:freq_strength", 
+    "message:freq_water", 
+    "message:freq_team", 
+    "message:freq_backcountry", 
+    "message:freq_winter", 
+    "message:freq_racquet", 
+    "income:education"
+  ),
+  wts = "cweight",
+  data_filter = "training == 1"
+)
+summary(result_logit)
+```
+
+
+```{r}
+## Look at the performance measure of AUC on the test set
+pred <- predict(result_logit, pred_data = test)
+test <- store(test, pred, name = "prob_logit")
+auc_logit <- auc(test$prob_logit, test$buyer)
+auc_logit
+```
+
+
+#### Predict Probability of Purchase (Classification) - Model 2: Neural Network
+```{r}
+## Run baseline neural network with 13 variables, with weights, and with default parameters
+result_nn_base <- nn(
+  pentathlon_nptb, 
+  rvar = "buyer", 
+  evar = c(
+    "message", "age", "gender", "income", "education", "children", 
+    "freq_endurance", "freq_strength", "freq_water", "freq_team", 
+    "freq_backcountry", "freq_winter", "freq_racquet"
+  ), 
+  lev = "yes", 
+  wts = "cweight",
+  seed = 1234, 
+  data_filter = "training == 1"
+)
+summary(result_nn_base, prn = TRUE)
+```
+
+
+```{r}
+## Cross-validation for neural network to get the optimal parameters in terms of maximizing AUC
+## cv.nn(result_nn_base, K = 5, size = 1:5, decay = seq(0.05, 0.5, 0.05), seed = 1234)
+## Optimal size = 3, decay = 0.4
+```
+
+
+```{r}
+## Neural network model with 13 variables, with weights, and with optimal parameters
+result_nn_cv <- nn(
+  pentathlon_nptb, 
+  rvar = "buyer", 
+  evar = c(
+    "message", "age", "gender", "income", "education", "children", 
+    "freq_endurance", "freq_strength", "freq_water", "freq_team", 
+    "freq_backcountry", "freq_winter", "freq_racquet"
+  ), 
+  lev = "yes", 
+  size = 3,
+  decay = 0.4,
+  wts = "cweight",
+  seed = 1234, 
+  data_filter = "training == 1"
+)
+summary(result_nn_cv, prn = TRUE)
+```
+
+
+```{r}
+## Look at the performance measure of AUC on the test set
+pred <- predict(result_nn_cv, pred_data = test)
+test <- store(test, pred, name = "prob_nn")
+auc_nn <- auc(test$prob_nn, test$buyer)
+auc_nn
+```
+
+
+#### Comparison of 2 Models Based on AUC on the Test Set
+```{r}
+AUC_tibble <- tibble::tibble(
+  name = c("Logistic Regression", "Neural Network"),
+  TestAUC = c(0.8819428, 0.8846645)) %>%
+  mutate(name = factor(name, levels = name))
+arrange(AUC_tibble, desc(TestAUC))
+```
+##### Since the AUC performance of Logistic Regression is similar (very close) to that of Neural Network on the test set, we choose to use Logistic Regression.
+
+
+
+
+#### Predict Order Size (Regression) - Model 1: Linear Regression
+```{r}
+## Run linear regression with 13 variables, and with message interacting with each of other 12 variables
+result_linear <- regress(
+  pentathlon_nptb, 
+  rvar = "total_os", 
+  evar = c(
+    "message", "age", "gender", "income", "education", "children", 
+    "freq_endurance", "freq_strength", "freq_water", "freq_team", 
+    "freq_backcountry", "freq_winter", "freq_racquet"
+  ), 
+  int = c(
+    "message:age", "message:gender", 
+    "message:income", "message:education", 
+    "message:children", "message:freq_endurance", 
+    "message:freq_strength", 
+    "message:freq_water", 
+    "message:freq_team", 
+    "message:freq_backcountry", 
+    "message:freq_winter", 
+    "message:freq_racquet", 
+    "income:education"
+  ), 
+  data_filter = "training == 1"
+)
+summary(result_linear)
+```
+
+
+```{r}
+## Look at the performance measure of RMSE on the test set
+pred <- predict(result_linear, pred_data = test)
+test <- store(test, pred, name = "reg_linear")
+rmse_linear <- RMSE(test$reg_linear, test$total_os)
+rmse_linear
+```
+
+
+#### Predict Order Size (Regression) - Model 2: Neural Network
+```{r}
+## Run neural network with 13 variables, and with default parameters
+result_reg_nn_base <- nn(
+  pentathlon_nptb, 
+  rvar = "total_os", 
+  evar = c(
+    "message", "age", "gender", "income", "education", "children", 
+    "freq_endurance", "freq_strength", "freq_water", "freq_team", 
+    "freq_backcountry", "freq_winter", "freq_racquet"
+  ), 
+  type = "regression", 
+  seed = 1234, 
+  data_filter = "training == 1"
+)
+summary(result_reg_nn_base, prn = TRUE)
+```
+
+
+```{r}
+## Cross-validation for neural network to get the optimal parameters in terms of minimizing RMSE
+## cv.nn(result_reg_nn_base, K = 5, size = 1:5, decay = seq(0.05, 0.5, 0.05), seed = 1234, fun = RMSE)
+## Optimal size = 2, decay = 0.3
+```
+
+
+```{r}
+## Neural network model with 13 variables, and with optimal parameters
+result_reg_nn_cv <- nn(
+  pentathlon_nptb, 
+  rvar = "total_os", 
+  evar = c(
+    "message", "age", "gender", "income", "education", "children", 
+    "freq_endurance", "freq_strength", "freq_water", "freq_team", 
+    "freq_backcountry", "freq_winter", "freq_racquet"
+  ), 
+  type = "regression", 
+  size = 2,
+  decay = 0.3,
+  seed = 1234, 
+  data_filter = "training == 1"
+)
+summary(result_reg_nn_cv, prn = TRUE)
+```
+
+
+```{r}
+## Look at the performance measure of RMSE on the test set
+pred <- predict(result_reg_nn_cv, pred_data = test)
+test <- store(test, pred, name = "reg_nn")
+rmse_nn <- RMSE(test$reg_nn, test$total_os)
+rmse_nn
+```
+
+
+#### Predict Order Size (Regression) - Model 3: Random Forest
+```{r}
+## Run random forest with 13 variables, and with default parameters
+result_reg_rf_base <- rforest(
+  pentathlon_nptb, 
+  rvar = "total_os", 
+  evar = c(
+    "message", "age", "gender", "income", "education", "children", 
+    "freq_endurance", "freq_strength", "freq_water", "freq_team", 
+    "freq_backcountry", "freq_winter", "freq_racquet"
+  ), 
+  type = "regression",
+  seed = 1234,
+  data_filter = "training == 1"
+)
+summary(result_reg_rf_base)
+```
+
+
+```{r}
+## Cross-validation for random forest to get the optimal parameters in terms of minimizing RMSE
+## cv.rforest(result_reg_rf_base, K = 5, repeats = 1, mtry = 1:4, num.trees = c(100, 200, 300, 400, 500), min.node.size = 1, sample.fraction = 1, trace = TRUE, seed = 1234)
+## Optimal mtry = 1, num.trees = 500
+```
+
+
+```{r}
+## Random forest model with 13 variables, and with optimal parameters
+result_reg_rf_cv <- rforest(
+  pentathlon_nptb, 
+  rvar = "total_os", 
+  evar = c(
+    "message", "age", "gender", "income", "education", "children", 
+    "freq_endurance", "freq_strength", "freq_water", "freq_team", 
+    "freq_backcountry", "freq_winter", "freq_racquet"
+  ), 
+  type = "regression", 
+  mtry = 1,
+  num.trees = 500,
+  seed = 1234, 
+  data_filter = "training == 1"
+)
+summary(result_reg_rf_cv, prn = TRUE)
+```
+
+
+```{r}
+## Look at the performance measure of RMSE on the test set
+pred <- predict(result_reg_rf_cv, pred_data = test)
+test <- store(test, pred, name = "reg_rf")
+rmse_rf <- RMSE(test$reg_rf, test$total_os)
+rmse_rf
+```
+
+
+#### Predict Order Size (Regression) - Model 4: XGBoost
+```{r}
+## Run XGBoost with 13 variables, and with default parameters
+result_reg_xgb_base <- gbt(
+  pentathlon_nptb, 
+  rvar = "total_os", 
+  evar = c(
+    "message", "age", "gender", "income", "education", "children", 
+    "freq_endurance", "freq_strength", "freq_water", "freq_team", 
+    "freq_backcountry", "freq_winter", "freq_racquet"
+  ), 
+  type = "regression",
+  seed = 1234,
+  data_filter = "training == 1"
+)
+summary(result_reg_xgb_base, prn = TRUE)
+```
+
+
+```{r}
+## Cross-validation for XGBoost to get the optimal parameters in terms of minimizing RMSE
+params <- list(max_depth = 1:6, learning_rate = seq(0.1, 0.5, 0.1))
+
+## cv.gbt(result_reg_xgb_base, params = params, maximize = FALSE, trace = TRUE, seed = 1234)
+## Optimal max_depth = 2, learning_rate = 0.2
+```
+
+
+```{r}
+## XGBoost model with 13 variables, and with optimal parameters
+result_reg_xgb_cv <- gbt(
+  pentathlon_nptb, 
+  rvar = "total_os", 
+  evar = c(
+    "message", "age", "gender", "income", "education", "children", 
+    "freq_endurance", "freq_strength", "freq_water", "freq_team", 
+    "freq_backcountry", "freq_winter", "freq_racquet"
+  ), 
+  type = "regression", 
+  max_depth = 2,
+  learning_rate = 0.2,
+  seed = 1234, 
+  data_filter = "training == 1"
+)
+summary(result_reg_xgb_cv, prn = TRUE)
+```
+
+
+```{r}
+## Look at the performance measure of RMSE on the test set
+pred <- predict(result_reg_xgb_cv, pred_data = test)
+test <- store(test, pred, name = "reg_xgb")
+rmse_xgb <- RMSE(test$reg_xgb, test$total_os)
+rmse_xgb
+```
+
+
+#### Comparison of 4 Models Based on RMSE on the Test Set
+```{r}
+RMSE_tibble <- tibble::tibble(
+  name = c("Linear Regression", "Neural Network", "Random Forest", "XGBoost"),
+  TestRMSE = c(45.98535, 45.77543, 46.23655, 45.84432)) %>%
+  mutate(name = factor(name, levels = name))
+arrange(RMSE_tibble, desc(-TestRMSE))
+```
+##### Since the RSME is lowest based on the Neural Network, we choose to use Neural Network.
+
+
+
+
+### Question 1
+#### Description of selecting the predictive models: First, since the AUC performance of Logistic Regression is similar (very close) to that of Neural Network on the test set, we choose to use Logistic Regression. Then, we apply the Next Product To Buy (NPTB) model to get the customized probability of purchase and to decide which message should be sent from the seven departments based on the highest probability of purchase.
+```{r}
+## Run logistic regression on buyer
+result_Q1 <- logistic(
+  pentathlon_nptb, 
+  rvar = "buyer", 
+  evar = c(
+    "message", "age", "gender", "income", "education", "children", 
+    "freq_endurance", "freq_strength", "freq_water", "freq_team", 
+    "freq_backcountry", "freq_winter", "freq_racquet"
+  ), 
+  lev = "yes", 
+  int = c(
+    "message:age", "message:gender", 
+    "message:income", "message:education", 
+    "message:children", "message:freq_endurance", 
+    "message:freq_strength", 
+    "message:freq_water", 
+    "message:freq_team", 
+    "message:freq_backcountry", 
+    "message:freq_winter", 
+    "message:freq_racquet", 
+    "income:education"
+  ),
+  wts = "cweight",
+  data_filter = "training == 1"
+)
+summary(result_Q1)
+```
+
+
+```{r}
+## Get predicted probability for each message
+pred <- predict(result_Q1, pred_data = pentathlon_nptb, pred_cmd = "message = 'endurance'")
+pentathlon_nptb <- store(pentathlon_nptb, pred, name = "p_endurance")
+
+pred <- predict(result_Q1, pred_data = pentathlon_nptb, pred_cmd = "message = 'strength'")
+pentathlon_nptb <- store(pentathlon_nptb, pred, name = "p_strength")
+
+pred <- predict(result_Q1, pred_data = pentathlon_nptb, pred_cmd = "message = 'water'")
+pentathlon_nptb <- store(pentathlon_nptb, pred, name = "p_water")
+
+pred <- predict(result_Q1, pred_data = pentathlon_nptb, pred_cmd = "message = 'team'")
+pentathlon_nptb <- store(pentathlon_nptb, pred, name = "p_team")
+
+pred <- predict(result_Q1, pred_data = pentathlon_nptb, pred_cmd = "message = 'backcountry'")
+pentathlon_nptb <- store(pentathlon_nptb, pred, name = "p_backcountry")
+
+pred <- predict(result_Q1, pred_data = pentathlon_nptb, pred_cmd = "message = 'winter'")
+pentathlon_nptb <- store(pentathlon_nptb, pred, name = "p_winter")
+
+pred <- predict(result_Q1, pred_data = pentathlon_nptb, pred_cmd = "message = 'racquet'")
+pentathlon_nptb <- store(pentathlon_nptb, pred, name = "p_racquet")
+
+
+## Automatically find the best message type for each customer
+pentathlon_nptb <- mutate(pentathlon_nptb, to_message = c("endurance", "strength", "water", "team", "backcountry", "winter", "racquet")[which.pmax(p_endurance, p_strength, p_water, p_team, p_backcountry, p_winter, p_racquet)])
+
+
+## Indicate the probability of responding for the best offer targeted to a customer
+pentathlon_nptb <- mutate(pentathlon_nptb, p_target = pmax(p_endurance, p_strength, p_water, p_team, p_backcountry, p_winter, p_racquet))
+
+
+## Answer to question 1
+representative_Q1 <- pentathlon_nptb %>%
+  filter(representative == 1) %>%
+  select(custid, to_message, p_target)
+
+head(representative_Q1)
+```
+
+
+### Question 2
+```{r}
+## Answer to question 2
+result_Q2 <- pivotr(
+  pentathlon_nptb, 
+  cvars = "to_message", 
+  normalize = "total", 
+  data_filter = "representative == 1", 
+  tabsort = "desc(n_obs)",
+  nr = Inf
+)
+summary(result_Q2, perc = TRUE)
+```
+
+
+### Question 3
+#### Description of selecting the predictive models: First, since the RSME is lowest based on the Neural Network, we choose to use Neural Network. Then, we apply the Next Product To Buy (NPTB) model to get the customized total order size along with the expected profit, and to decide which message should be sent from the seven departments based on the highest expected profit.
+```{r}
+## Run neural network on total order size
+result_Q3 <- nn(
+  pentathlon_nptb, 
+  rvar = "total_os", 
+  evar = c(
+    "message", "age", "gender", "income", "education", "children", 
+    "freq_endurance", "freq_strength", "freq_water", "freq_team", 
+    "freq_backcountry", "freq_winter", "freq_racquet"
+  ), 
+  type = "regression", 
+  size = 2,
+  decay = 0.3,
+  seed = 1234, 
+  data_filter = "training == 1"
+)
+summary(result_Q3, prn = TRUE)
+```
+
+
+```{r}
+## Get predicted total order size for each message and make negative order size as 0
+pred <- predict(result_Q3, pred_data = pentathlon_nptb, pred_cmd = "message = 'endurance'")
+pentathlon_nptb <- store(pentathlon_nptb, pred, name = "os_endurance")
+pentathlon_nptb$os_endurance <- ifelse(pentathlon_nptb$os_endurance < 0, 0, pentathlon_nptb$os_endurance)
+
+pred <- predict(result_Q3, pred_data = pentathlon_nptb, pred_cmd = "message = 'strength'")
+pentathlon_nptb <- store(pentathlon_nptb, pred, name = "os_strength")
+pentathlon_nptb$os_strength <- ifelse(pentathlon_nptb$os_strength < 0, 0, pentathlon_nptb$os_strength)
+
+pred <- predict(result_Q3, pred_data = pentathlon_nptb, pred_cmd = "message = 'water'")
+pentathlon_nptb <- store(pentathlon_nptb, pred, name = "os_water")
+pentathlon_nptb$os_water <- ifelse(pentathlon_nptb$os_water < 0, 0, pentathlon_nptb$os_water)
+
+pred <- predict(result_Q3, pred_data = pentathlon_nptb, pred_cmd = "message = 'team'")
+pentathlon_nptb <- store(pentathlon_nptb, pred, name = "os_team")
+pentathlon_nptb$os_team <- ifelse(pentathlon_nptb$os_team < 0, 0, pentathlon_nptb$os_team)
+
+pred <- predict(result_Q3, pred_data = pentathlon_nptb, pred_cmd = "message = 'backcountry'")
+pentathlon_nptb <- store(pentathlon_nptb, pred, name = "os_backcountry")
+pentathlon_nptb$os_backcountry <- ifelse(pentathlon_nptb$os_backcountry < 0, 0, pentathlon_nptb$os_backcountry)
+
+pred <- predict(result_Q3, pred_data = pentathlon_nptb, pred_cmd = "message = 'winter'")
+pentathlon_nptb <- store(pentathlon_nptb, pred, name = "os_winter")
+pentathlon_nptb$os_winter <- ifelse(pentathlon_nptb$os_winter < 0, 0, pentathlon_nptb$os_winter)
+
+pred <- predict(result_Q3, pred_data = pentathlon_nptb, pred_cmd = "message = 'racquet'")
+pentathlon_nptb <- store(pentathlon_nptb, pred, name = "os_racquet")
+pentathlon_nptb$os_racquet <- ifelse(pentathlon_nptb$os_racquet < 0, 0, pentathlon_nptb$os_racquet)
+
+
+## Get expected prfit for each message type
+pentathlon_nptb <- mutate(pentathlon_nptb, profit_endurance = p_endurance * os_endurance * 0.4)
+
+pentathlon_nptb <- mutate(pentathlon_nptb, profit_strength = p_strength * os_strength * 0.4)
+
+pentathlon_nptb <- mutate(pentathlon_nptb, profit_water = p_water * os_water * 0.4)
+
+pentathlon_nptb <- mutate(pentathlon_nptb, profit_team = p_team * os_team * 0.4)
+
+pentathlon_nptb <- mutate(pentathlon_nptb, profit_backcountry = p_backcountry * os_backcountry * 0.4)
+
+pentathlon_nptb <- mutate(pentathlon_nptb, profit_winter = p_winter * os_winter * 0.4)
+
+pentathlon_nptb <- mutate(pentathlon_nptb, profit_racquet = p_racquet * os_racquet * 0.4)
+
+
+## Get the best message type for each customer based on highest expected profit
+pentathlon_nptb <- mutate(pentathlon_nptb, to_message_profit = c("endurance", "strength", "water", "team", "backcountry", "winter", "racquet")[which.pmax(profit_endurance, profit_strength, profit_water, profit_team, profit_backcountry, profit_winter, profit_racquet)])
+
+
+## Answer to question 3
+representative_Q3 <- pentathlon_nptb %>%
+  filter(representative == 1) %>%
+  select(custid, to_message_profit)
+
+head(representative_Q3)
+```
+
+
+### Question 4
+```{r}
+## Answer to question 4
+result_Q4 <- pivotr(
+  pentathlon_nptb, 
+  cvars = "to_message_profit", 
+  normalize = "total", 
+  data_filter = "representative == 1", 
+  tabsort = "desc(n_obs)",
+  nr = Inf
+)
+summary(result_Q4, perc = TRUE)
+```
+
+
+### Question 5
+```{r}
+## Indicate the value of highest expected profit of responding for the best offer targeted to a customer
+pentathlon_nptb <- mutate(pentathlon_nptb, profit_target = pmax(profit_endurance, profit_strength, profit_water, profit_team, profit_backcountry, profit_winter, profit_racquet))
+
+
+## Answer to question 5
+representative_Q5 <- pentathlon_nptb %>%
+  filter(representative == 1) %>%
+  select(custid, profit_target)
+
+exp_prof_Q5 <- mean(representative_Q5$profit_target)
+exp_prof_Q5
+```
+
+
+### Question 6
+```{r}
+## Answer to question 6
+representative_Q6 <- pentathlon_nptb %>%
+  filter(representative == 1) %>%
+  select(custid, profit_endurance, profit_strength, profit_water, profit_team, profit_backcountry, profit_winter, profit_racquet)
+
+exp_prof_endurance <- mean(representative_Q6$profit_endurance)
+exp_prof_strength <- mean(representative_Q6$profit_strength)
+exp_prof_water <- mean(representative_Q6$profit_water)
+exp_prof_team <- mean(representative_Q6$profit_team)
+exp_prof_backcountry <- mean(representative_Q6$profit_backcountry)
+exp_prof_winter <- mean(representative_Q6$profit_winter)
+exp_prof_racquet <- mean(representative_Q6$profit_racquet)
+print(paste0("endurance: ", exp_prof_endurance))
+print(paste0("strength: ", exp_prof_strength))
+print(paste0("water: ", exp_prof_water))
+print(paste0("team: ", exp_prof_team))
+print(paste0("backcountry: ", exp_prof_backcountry))
+print(paste0("winter: ", exp_prof_winter))
+print(paste0("racquet: ", exp_prof_racquet))
+```
+
+
+### Question 7
+```{r}
+## Answer to question 7
+df_Q7 <- pentathlon_nptb %>%
+  select(profit_endurance, profit_strength, profit_water, profit_team, profit_backcountry, profit_winter, profit_racquet)
+
+set.seed(1234)
+
+pentathlon_nptb$sample_random_profit <- apply(df_Q7, 1, sample, size = 1)
+
+representative_Q7 <- pentathlon_nptb %>%
+  filter(representative == 1) %>%
+  select(custid, sample_random_profit)
+
+exp_prof_Q7 <- mean(representative_Q7$sample_random_profit)
+exp_prof_Q7
+```
+
+
+### Question 8
+```{r}
+custom_scale_prof <- mean(representative_Q5$profit_target) * 5000000
+random_scale_prof <- mean(representative_Q7$sample_random_profit) * 5000000
+percent_improvement <- (custom_scale_prof - random_scale_prof) / random_scale_prof
+euro_improvement <- custom_scale_prof - random_scale_prof
+print(paste0("The improvement in percent is ", round(percent_improvement * 100, 2), "%. The improvement in total Euros is ", round(euro_improvement, 2), " Euros."))
+```
+
+
+
+
+### Weaknesses of the New E-mail Policy Proposal & Potential Improvements
+#### Issue 1: Based on the table in question 4 (the percentage of customers for whom that message maximizes their expected profit), only very small amount of emails is sent from team, winter and racquet departments. If the company follows the new proposal, these three department will almost never get the chance to send emails to the customers. In this case, the company might lose the opportunities to sell products in these departments.
+#### Improvement 1:  Instead of allowing two departments whose messages yield the highest expected profit to each control 1/2 of the emails to that customer, change the method to 1/3 from the 1st department, 1/3 from the 2nd department, and 1/3 from a randomly chosen department other than the first two.
+
+#### Issue 2: If the prediction yields a department that the customer doesn’t like, and the company keeps sending emails from that department for an entire month, the customer might get tired of the content and eventually un-subscribe the email, leading to potential customer churn. The new proposal is not flexible enough.
+#### Improvement 2: Instead of sending promotional emails on a monthly basis, reduce the time to half a month or three weeks.
+
+#### Issue 3: Top 1 department and Top 2 department may still yield very different expected profit, so it might not be the best to allow each one of them to send 1/2 of the emails to a customer.
+#### Improvement 3: Increase the weight for the department that yields higher profit.
+
+
+
