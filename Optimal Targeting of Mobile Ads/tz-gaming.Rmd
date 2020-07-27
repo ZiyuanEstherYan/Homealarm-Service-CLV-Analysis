@@ -1,0 +1,649 @@
+---
+title: "TZ Gaming: Optimal Targeting of Mobile Ads"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+* Name: Ziyuan Yan
+* GitLab id: "rsm-ziy062 "
+
+```{r r_setup, include = FALSE}
+## initial settings
+knitr::opts_chunk$set(
+  comment = NA,
+  echo = TRUE,
+  error = TRUE,
+  cache = FALSE,
+  message = FALSE,
+  dpi = 96,
+  warning = FALSE
+)
+
+## width to use when printing tables etc.
+options(
+  width = 250,
+  scipen = 100,
+  max.print = 5000,
+  stringsAsFactors = FALSE
+)
+
+## load radiant packages if neededi
+if (!exists("r_environment")) library(radiant)
+```
+
+<style>
+.btn, .form-control, pre, code, pre code {
+  border-radius: 4px;
+}
+.table {
+  width: auto;
+}
+ul, ol {
+  padding-left: 18px;
+}
+code, pre, pre code {
+  overflow: auto;
+  white-space: pre;
+  word-wrap: normal;
+}
+code {
+  color: #c7254e;
+  background-color: #f9f2f4;
+}
+pre {
+  background-color: #ffffff;
+}
+</style>
+
+## Setup
+
+Please complete this Rmarkdown document by answering the questions in `tz-gaming.pdf` on Canvas (week5/). Create a Notebook/HTML file with all your results and comments and push both the Rmarkdown and HTML file to GitLab when you are done. All results MUST be reproducible (i.e., the TA and I must be able to recreate the HTML from the Rmarkdown file without changes or errors).
+
+> Note: If you use Rstudio's git tab to push your submission to GitLab you may see warnings or messages when pushing the HTML file because of its size. To avoid these messages you can also push your files to GitLab by using GitGadget's "Sync" tab (i.e., Commit your changes and then Push). 
+
+```{r}
+library(radiant)
+library(tidyverse)
+```
+
+```{r}
+## loading the data - this dataset must NOT be changed
+tz_gaming <- readr::read_rds("data/tz_gaming.rds")
+radiant.data::describe(tz_gaming)
+```
+
+```{r}
+training <- tz_gaming %>%
+  filter(training == 'train')
+
+test <- tz_gaming %>%
+  filter(training == 'test')
+```
+
+## Part I: Logistic Regression
+#### a.
+```{r}
+click_logit <- radiant.model::logistic(
+  training,
+  rvar = "click",
+  evar = c("impup", "clup", "ctrup", "impua", "clua", "ctrua", "imput", "clut", "ctrut", "imppat", "clpat", "ctrpat"),
+  lev = "yes"
+)
+
+summary(click_logit)
+```
+
+#### b.
+##### Explanatory variables that are statistically significant: clut, ctrup, impua, ctrua, imput, clut, ctrut, imppat, clpat, ctrpat. Because their p-values are < 0.05, the significant level. 
+##### The variables that seem to be most important: ctrpat, becuase the odds-ratio is the lagest. clut is also important. 
+
+##### (1) an interpretation of the odds-ratios estimated for each of the explanatory variables:
+###### Keeping all other variables in the model constant, when clut increases by 1 unit, the odds of the adds being clicked increase by a factor of 1.254. 
+###### Keeping all other variables in the model constant, when ctrpat increases by 1 unit, the odds of the adds being clicked increase by a factor of 1.359. 
+###### Among all of these, clup, ctrup, clua, ctrua, clut, ctrut, clpat and ctrpat increases the odds of the adds being clicked. ctrpat has the largest impact. 
+
+##### (2) an evaluation of the model as a whole:
+###### Most of the variables in the model has p-value < 0.001, general p-value for the whole model is also < 0.001, which means that most of the explanatory variables are statistically significant. 
+
+## Part II: Decile Analysis of Logistic Regression Results
+#### a.
+```{r}
+pred_test = predict(click_logit, test, type="response")
+
+pred_test <- pred_test %>%
+  mutate(dec_logit = xtile(pred_test$Prediction, n = 10, rev = TRUE)) %>%
+  select("Prediction", "2.5%", "97.5%", "dec_logit")
+
+test_IIa <- cbind(test, pred_test)
+```
+
+#### b.
+```{r}
+b <- test_IIa %>%
+  group_by(dec_logit) %>%
+  summarise(click_through_rate = sum(click == "yes")/n())
+
+ggplot(b, aes(x = as.factor(dec_logit), y = click_through_rate)) + 
+  geom_bar(stat = 'identity') + 
+  labs(title = "Click-through rates per decile", x = "Decile", y = "Click through rate")
+```
+
+#### c.
+```{r}
+dec_df_logit <- test_IIa %>%
+  group_by(dec_logit) %>%
+  summarise(num_impression = n(),
+            num_clicks = sum(click == "yes"),
+            click_through_rate = sum(click == "yes")/n())
+```
+
+#### d.
+```{r}
+d <- radiant.model::logistic(
+  training, 
+  rvar = "click", 
+  evar = c("imppat", "clpat", "ctrpat"), 
+  lev = "yes", 
+  check = "standardize"
+)
+summary(d)
+```
+
+##### Interpretation: 
+###### Keeping all other variables in the model constant, when imppat increases by 1 standard deviation, the odds of the adds being clicked increase by a factor of 0.134.
+###### Keeping all other variables in the model constant, when clpat increases by 1 standard deviation, the odds of the adds being clicked increase by a factor of 11.688.
+###### Keeping all other variables in the model constant, when ctrpat increases by 1 standard deviation, the odds of the adds being clicked increase by a factor of 2.025.
+
+#### e.
+###### imppat – Number of past impressions that showed the TZ ad in the app in the hour
+###### clpat – Number of past clicks the TZ ad has received in the app in the hour
+###### The high correlation (0.97) between imppat and clpat makes sense, because the more TZ adds that are shown in impressions, the more clicks TZ will receive. 
+###### Different approaches to deal with highly correlated explanatory variables: 1. Check that there is no dummy variable trap. 2. Drop one of the variables that is highly correlated with the other. 3. Combine two highly correlated variables. 4. Standardize the independent variables. 
+###### Implications for the model: ctrpat has the largest impact on the result (adds being clicked). 
+
+```{r}
+e <- radiant.model::logistic(
+  training, 
+  rvar = "click", 
+  evar = c("imppat", "ctrpat"), 
+  lev = "yes",
+  check = "standardize"
+)
+summary(e)
+```
+###### When I remove clpat from the model, the estimated (standardized) odd-ratio for imppat increases significantly. In fact, coefficient changed from negative to positive. As we removed the variable that is highly correlated with imppat, the result for impaat would definitely change.
+
+#### f.
+```{r}
+f <- radiant.model::logistic(
+  training, 
+  rvar = "click", 
+  evar = c("time_fct", "app", "imppat", "clpat", "ctrpat"), 
+  lev = "yes"
+)
+summary(f)
+```
+###### The odds ratio are different in the two models because this model is not standardized and we added to more variables. Since imppat, clpat ad ctrpat are all correlated with the two new variables, the odds ratios are different. 
+
+## Part III: Lift and Gains
+#### a.
+```{r}
+lift <- dec_df_logit %>%
+  mutate(res_rate = num_clicks/num_impression, 
+         lift = res_rate/mean(res_rate),
+         cum_num_impression = cumsum(num_impression), 
+         cum_num_clicks = cumsum(num_clicks),
+         cum_res_rate = cum_num_clicks/cum_num_impression,
+         cum_lift = cum_res_rate/mean(res_rate)) %>%
+  select(dec_logit, lift, cum_lift)
+```
+
+#### b.
+```{r}
+ggplot(lift, aes(x = as.factor(dec_logit), y = cum_lift)) + 
+  geom_point() + 
+  geom_line(group = 1, linetype = "dotted") + 
+  labs(title = "Cumulative lift per decile", x = "Decile", y = "Cumulative lift")
+```
+
+#### c.
+```{r}
+gains <- dec_df_logit %>%
+  mutate(cum_num_clicks = cumsum(num_clicks),
+         gains = num_clicks/sum(num_clicks),
+         cum_gains = cum_num_clicks/sum(num_clicks)) %>%
+  select(dec_logit, gains, cum_gains)
+
+zero <- c(0, 0, 0)
+gains <- rbind(zero, gains)
+```
+
+#### d.
+```{r}
+ggplot(gains, aes(x = as.factor(dec_logit), y = cum_gains)) + 
+  geom_point() + 
+  geom_line(group = 1, linetype = "dotted") + 
+  geom_segment(aes(x = 1, y = 0, xend = 11, yend = 1)) +
+  labs(title = "Cumulative gains per decile", x = "Decile", y = "Cumulative gains")
+```
+
+## Part IV: Confusion matrix
+#### a.
+```{r}
+breakeven <- (10/1000)/(25*0.05)
+
+IV <- test_IIa %>%
+  mutate(target = ifelse(Prediction > breakeven, 1, 0),
+         click_numeric = ifelse(click == "yes", 1, 0),
+         TP = ifelse(target == 1 & click_numeric == 1, 1, 0),
+         TN = ifelse(target == 0 & click_numeric == 0, 1, 0),
+         FP = ifelse(target == 1 & click_numeric == 0, 1, 0),
+         FN = ifelse(target == 0 & click_numeric == 1, 1, 0))
+
+TP <- sum(IV$TP)
+TN <- sum(IV$TN)
+FP <- sum(IV$FP)
+FN <- sum(IV$FN)
+
+confusion <- data.frame(matrix(NA, nrow = 2, ncol = 2))
+rownames(confusion) <- c("Pos_Actual", "Neg_Actual")
+colnames(confusion) <- c("Pos_Predict", "Neg_Predict")
+confusion[1, 1] = TP
+confusion[1, 2] = FN
+confusion[2, 1] = FP
+confusion[2, 2] = TN
+
+accuracy <- (TP+TN)/(TP+TN+FP+FN)
+```
+
+#### b.
+```{r}
+IVb <- radiant.model::logistic(
+  training, 
+  rvar = "click", 
+  evar = "rnd",
+  lev = "yes"
+)
+summary(IVb)
+
+pred_test_IVb = predict(IVb, test, type="response")
+pred_test_IVb <- pred_test_IVb %>%
+  select(Prediction)
+test_IVb <- cbind(test, pred_test_IVb)
+
+test_IVb <- test_IVb %>%
+  mutate(target = ifelse(Prediction > breakeven, 1, 0),
+         click_numeric = ifelse(click == "yes", 1, 0),
+         TP = ifelse(target == 1 & click_numeric == 1, 1, 0),
+         TN = ifelse(target == 0 & click_numeric == 0, 1, 0),
+         FP = ifelse(target == 1 & click_numeric == 0, 1, 0),
+         FN = ifelse(target == 0 & click_numeric == 1, 1, 0))
+
+TP <- sum(test_IVb$TP)
+TN <- sum(test_IVb$TN)
+FP <- sum(test_IVb$FP)
+FN <- sum(test_IVb$FN)
+
+confusion_IVb <- data.frame(matrix(NA, nrow = 2, ncol = 2))
+rownames(confusion_IVb) <- c("Pos_Actual", "Neg_Actual")
+colnames(confusion_IVb) <- c("Pos_Predict", "Neg_Predict")
+confusion_IVb[1, 1] = TP
+confusion_IVb[1, 2] = FN
+confusion_IVb[2, 1] = FP
+confusion_IVb[2, 2] = TN
+
+accuracy_IVb <- (TP+TN)/(TP+TN+FP+FN)
+```
+
+#### c.
+###### Similarities between the two matrices: Both have similar TP. 
+###### Differences between the two matrices: confusion IBv has extremely high FP, FN = 0 and very low TN. It basically predict impression as being clicked.  
+###### Based on the confusion matrix, the model in I.a is better because accuracy is higher, TN is higher, and FP is lower. In this case the company is not posting too many adds and wasting money. 
+
+#### d.
+```{r}
+IV_0.5 <- test_IIa %>%
+  mutate(target = ifelse(Prediction > 0.5, 1, 0),
+         click_numeric = ifelse(click == "yes", 1, 0),
+         TP = ifelse(target == 1 & click_numeric == 1, 1, 0),
+         TN = ifelse(target == 0 & click_numeric == 0, 1, 0),
+         FP = ifelse(target == 1 & click_numeric == 0, 1, 0),
+         FN = ifelse(target == 0 & click_numeric == 1, 1, 0))
+
+TP <- sum(IV_0.5$TP)
+TN <- sum(IV_0.5$TN)
+FP <- sum(IV_0.5$FP)
+FN <- sum(IV_0.5$FN)
+
+confusion_0.5 <- data.frame(matrix(NA, nrow = 2, ncol = 2))
+rownames(confusion_0.5) <- c("Pos_Actual", "Neg_Actual")
+colnames(confusion_0.5) <- c("Pos_Predict", "Neg_Predict")
+confusion_0.5[1, 1] = TP
+confusion_0.5[1, 2] = FN
+confusion_0.5[2, 1] = FP
+confusion_0.5[2, 2] = TN
+
+accuracy_0.5 <- (TP+TN)/(TP+TN+FP+FN)
+```
+
+```{r}
+test_IVb_0.5 <- test_IVb %>%
+  mutate(target = ifelse(Prediction > 0.5, 1, 0),
+         click_numeric = ifelse(click == "yes", 1, 0),
+         TP = ifelse(target == 1 & click_numeric == 1, 1, 0),
+         TN = ifelse(target == 0 & click_numeric == 0, 1, 0),
+         FP = ifelse(target == 1 & click_numeric == 0, 1, 0),
+         FN = ifelse(target == 0 & click_numeric == 1, 1, 0))
+
+TP <- sum(test_IVb_0.5$TP)
+TN <- sum(test_IVb_0.5$TN)
+FP <- sum(test_IVb_0.5$FP)
+FN <- sum(test_IVb_0.5$FN)
+
+confusion_IVb_0.5 <- data.frame(matrix(NA, nrow = 2, ncol = 2))
+rownames(confusion_IVb_0.5) <- c("Pos_Actual", "Neg_Actual")
+colnames(confusion_IVb_0.5) <- c("Pos_Predict", "Neg_Predict")
+confusion_IVb_0.5[1, 1] = TP
+confusion_IVb_0.5[1, 2] = FN
+confusion_IVb_0.5[2, 1] = FP
+confusion_IVb_0.5[2, 2] = TN
+
+accuracy_IVb_0.5 <- (TP+TN)/(TP+TN+FP+FN)
+```
+
+###### Similarities between the two matrices: Both have similar FN and TN. 
+###### Differences between the two matrices: confusion_IVb_0.5 has TP = 0 and PF = 0. It basically predict impression as not being clicked. It also has a slightly higher accuracy.
+###### Based on the confusion matrix, the model in I.a is still better. Although it has slightly lower accuracy, it has higher TR and is actually making money. While the other model predict every impression as not being clicked and therefore won't make any money. In addition, it has lower FN. 
+
+#### Part V: Profitability Analysis
+#### a.
+```{r}
+breakeven <- (10/1000)/(25*0.05)
+```
+
+#### b.
+```{r}
+pred_test_Vb = predict(click_logit, test, type="response")
+
+pred_test_Vb_Prediction <- pred_test_Vb %>%
+  select(Prediction)
+
+test_Vb <- cbind(test, pred_test_Vb_Prediction)
+
+test_Vb <- test_Vb %>%
+  mutate(target_logit = ifelse(Prediction > breakeven, TRUE, FALSE))
+```
+
+#### c.
+```{r}
+# Function to calculate profit and ROME
+profit <- function(total_impressions, predict_prob, rep_rate) {
+  cost <- (total_impressions/1000)*10*predict_prob
+  revenue <- 25*total_impressions*0.05*predict_prob*rep_rate
+  profit <- revenue - cost
+  ROME <- profit/cost
+  return(c(profit, ROME))
+}
+```
+
+#### (1) no targeting, use the predictions from the model you estimated in IV.b
+```{r}
+dat <- filter(test_IVb, target == TRUE)
+rep_rate <- mean(dat$click == "yes")
+
+Vc1 <- profit(27953, mean(test_IVb$target), rep_rate)
+Vc1
+```
+
+#### (2) purchased the data from Vneta and used the logistic regression from I.a for targeting
+```{r}
+dat2 <- filter(test_Vb, target_logit == TRUE)
+rep_rate2 <- mean(dat2$click == "yes")
+
+Vc2 <- profit(27953, mean(test_Vb$target_logit), rep_rate2)
+Vc2
+```
+
+#### (3) used Vneta’s data science consulting services
+```{r}
+test_Vc3 <- test %>%
+  mutate(target_vneta = ifelse(click_vneta > breakeven, TRUE, FALSE))
+
+dat3 <- filter(test_Vc3, target_vneta == TRUE)
+rep_rate3 <- mean(dat3$click == "yes")
+
+Vc3 <- profit(27953, mean(test_Vc3$target_vneta), rep_rate3)
+Vc3
+```
+
+#### d.
+```{r}
+# Function to calculate profit and ROME
+profit2 <- function(total_impressions, rep_rate, fixed_cost) {
+  cost <- (total_impressions/1000)*10 + fixed_cost
+  revenue <- 25*total_impressions*0.05*rep_rate
+  profit <- revenue - cost
+  ROME <- profit/cost
+  return(c(profit, ROME))
+}
+```
+
+#### (1) no targeting
+```{r}
+Vd1 <- profit2(20000000, rep_rate, 0)
+Vd1
+```
+
+#### (2) purchased the data from Vneta and used the logistic regression from I.a for targeting
+```{r}
+Vd2 <- profit2(20000000, rep_rate2, 50000)
+Vd2
+```
+
+#### (3) used Vneta’s data science consulting services
+```{r}
+Vd3 <- profit2(20000000, rep_rate3, 150000)
+Vd3
+```
+
+## Part VI: Model comparison
+#### a.
+```{r}
+result <- radiant.model::logistic(
+  training,
+  rvar = "click",
+  evar = c("impup", "clup", "ctrup", "impua", "clua", "ctrua", "imput", "clut", "ctrut", "imppat", "clpat", "ctrpat"),
+  lev = "yes"
+)
+
+summary(result)
+
+pred <- predict(result, pred_data = tz_gaming, conf_lev = 0.9, se = TRUE)
+pred
+
+tz_gaming <- store(tz_gaming, pred, name = c("click_logit", "click_logit_lb", "click_logit_ub"))
+
+test_new <- tz_gaming %>%
+  filter(training == "test")
+```
+
+```{r}
+# V.b redo
+test_new <- test_new %>%
+  mutate(target_logit_lb = ifelse(click_logit_lb > breakeven, TRUE, FALSE))
+```
+
+```{r}
+# V.c redo
+#### (2) purchased the data from Vneta and used the logistic regression from I.a for targeting
+dat2_redo <- filter(test_new, target_logit_lb == TRUE)
+rep_rate2_redo <- mean(dat2_redo$click == "yes")
+
+Vc2_redo <- profit(27953, mean(test_new$target_logit_lb), rep_rate2_redo)
+Vc2_redo
+```
+
+```{r}
+# V.d redo
+#### (2) purchased the data from Vneta and used the logistic regression from I.a for targeting
+Vd2_redo <- profit2(20000000, rep_rate2_redo, 50000)
+Vd2_redo
+```
+
+#### b.
+```{r include=FALSE}
+result_stepwise <- radiant.model::logistic(
+  training, 
+  rvar = "click", 
+  evar = c("time_fct", "app", "impup", "clup", "ctrup", "impua", "clua", "ctrua", "imput", "clut", "ctrut", "imppat", "clpat"), 
+  lev = "yes", 
+  check = "stepwise-backward"
+)
+summary(result_stepwise)
+
+pred_stepwise <- predict(result_stepwise, pred_data = tz_gaming, type = "response") %>%
+  select(Prediction)
+
+test_stepwise <- cbind(tz_gaming, pred_stepwise)
+test_stepwise <- test_stepwise %>%
+  filter(training == "test") %>%
+  rename(click_logit_stepwise_pre = Prediction)
+```
+
+```{r}
+test_stepwise <- test_stepwise %>%
+  mutate(target_logit_stepwise = ifelse(click_logit_stepwise_pre > breakeven, 1, 0))
+```
+
+#### c.
+
+#### Gains
+```{r}
+# Function to calculate gain
+gains_func <- function(dataset, prediction) {
+  
+  dataset <- dataset %>%
+    mutate(decile = xtile(prediction, n = 10, rev = TRUE)) %>%
+    group_by(decile) %>%
+    summarise(num_impression = n(),
+            num_clicks = sum(click == "yes"),
+            click_through_rate = sum(click == "yes")/n()) %>%
+    mutate(cum_num_clicks = cumsum(num_clicks),
+         cum_gains = cum_num_clicks/sum(num_clicks)) %>%
+    select(decile, cum_gains)
+  
+  return(dataset)
+}
+
+zero <- c(0, 0)
+  
+gains_click_logit <- gains_func(test_IIa, test_IIa$Prediction) %>%
+  rename(gains_click_logit = cum_gains)
+gains_click_logit <- rbind(zero, gains_click_logit)
+
+gains_click_rnd <- gains_func(test_IVb, test_IVb$Prediction) %>%
+  rename(gains_click_rnd = cum_gains)
+gains_click_rnd <- rbind(zero, gains_click_rnd)
+
+gains_click_logit_step <- gains_func(test_stepwise, test_stepwise$click_logit_stepwise_pre) %>%
+  rename(gains_click_logit_step = cum_gains)
+gains_click_logit_step <- rbind(zero, gains_click_logit_step)
+
+gains_click_logit_lb <- gains_func(test_new, test_new$click_logit_lb) %>%
+  rename(gains_click_logit_lb = cum_gains)
+gains_click_logit_lb <- rbind(zero, gains_click_logit_lb)
+
+gains_click_vneta <- gains_func(test, test$click_vneta) %>%
+  rename(gains_click_vneta = cum_gains)
+gains_click_vneta <- rbind(zero, gains_click_vneta)
+
+ggplot() +
+  geom_line(data = gains_click_logit, aes(x = as.factor(decile), y = gains_click_logit, group = 1),color = "green") +
+  geom_line(data = gains_click_rnd, aes(x = as.factor(decile), y = gains_click_rnd, group = 1),color = "yello") +
+  geom_line(data = gains_click_logit_step, aes(x = as.factor(decile), y = gains_click_logit_step, group = 1),color = "blue") +
+  geom_line(data = gains_click_logit_lb, aes(x = as.factor(decile), y = gains_click_logit_lb, group = 1),color = "orange") +
+  geom_line(data = gains_click_vneta, aes(x = as.factor(decile), y = gains_click_vneta, group = 1),color = "red") + 
+  geom_segment(aes(x = 1, y = 0, xend = 11, yend = 1))
+```
+##### Very similar except Vneta
+
+#### Profit and ROME
+```{r}
+# (1) click_logit
+test_IIa <- test_IIa %>%
+  mutate(target = ifelse(Prediction > breakeven, 1, 0))
+
+dat <- filter(test_IIa, target == TRUE)
+rep_rate <- mean(dat$click == "yes")
+
+profit_click_logit<- profit2(20000000, rep_rate, 50000)
+profit_click_logit
+```
+
+```{r}
+# (2) gains_click_rnd
+dat <- filter(test_IVb, target == TRUE)
+rep_rate <- mean(dat$click == "yes")
+
+profit_click_rnd <- profit2(20000000, rep_rate, 0)
+profit_click_rnd
+```
+
+```{r}
+# (3) gains_click_logit_step
+dat <- filter(test_stepwise, target_logit_stepwise == TRUE)
+rep_rate <- mean(dat$click == "yes")
+
+profit_click_logit_step <- profit2(20000000, rep_rate, 50000)
+profit_click_logit_step
+```
+
+```{r}
+# (4) gains_click_logit_lb
+test_new <- test_new %>%
+  mutate(target_logit_lb = ifelse(click_logit_lb > breakeven, 1, 0))
+
+dat <- filter(test_new, target_logit_lb == TRUE)
+rep_rate <- mean(dat$click == "yes")
+
+profit_click_logit_lb <- profit2(20000000, rep_rate, 50000)
+profit_click_logit_lb
+```
+
+```{r}
+# (5) gains_click_vneta
+test <- test %>%
+  mutate(target_vneta = ifelse(click_vneta > breakeven, 1, 0))
+
+dat <- filter(test, target_vneta == TRUE)
+rep_rate <- mean(dat$click == "yes")
+
+profit_click_vneta <- profit2(20000000, rep_rate, 150000)
+profit_click_vneta
+```
+
+```{r}
+profit_table <- cbind(profit_click_logit[1], profit_click_rnd[1], profit_click_logit_step[1], profit_click_logit_lb[1], profit_click_vneta[1])
+profit_table <- as.data.frame(profit_table)
+colnames(profit_table) <- c('profit_click_logit', 'profit_click_rnd', 'profit_click_logit_step', 'profit_click_logit_lb', 'profit_click_vneta')
+profit_table
+```
+
+###### Profit: Vneta > lb > logit > stepwise > rnd. 
+
+```{r}
+ROME_table <- cbind(profit_click_logit[2], profit_click_rnd[2], profit_click_logit_step[2], profit_click_logit_lb[2], profit_click_vneta[2])
+ROME_table <- as.data.frame(ROME_table)
+colnames(ROME_table) <- c('ROME_click_logit', 'ROME_click_rnd', 'ROME_click_logit_step', 'ROME_click_logit_lb', 'ROME_click_vneta')
+ROME_table
+```
+
+###### ROME: lb > Vneta > logit. The other two has ROME < 1
+###### Overall I recommend lb and logit. Vneta also has high profit and ROME but the data is too skewed. 
+
+
+
+
+
+
